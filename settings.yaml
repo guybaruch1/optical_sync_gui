@@ -10,10 +10,9 @@ camera:
   # Must match a profile the sensor actually reports (see realsense_utils.match_profile).
   # NOTE: not currently read by the GUI - the Stream Config wizard page lets
   # you pick resolution/fps live from whatever the connected camera reports
-  # instead of defaulting from here. Kept here for documentation/reference;
-  # select this same 480x270 @ 30fps combo in that page each run.
-  ir: {width: 480, height: 270, fps: 30}
-  color: {width: 480, height: 270, fps: 30}
+  # instead of defaulting from here. Kept here for documentation/reference.
+  ir: {width: 1280, height: 720, fps: 30}
+  color: {width: 1280, height: 720, fps: 30}
 
 rig:
   # Which physical setup (distance x height combo) is currently on the bench.
