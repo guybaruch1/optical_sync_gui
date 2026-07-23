@@ -6,6 +6,7 @@ from domain.realsense_utils import (
     detect_led_centroids,
     ir_bytes_to_image,
     yuyv_to_bgr,
+    save_debug_detection_image,
 )
 
 
@@ -67,3 +68,21 @@ def test_yuyv_to_bgr_returns_correct_shape():
     raw = bytes([128] * (width * height * 2))
     bgr = yuyv_to_bgr(raw, width, height)
     assert bgr.shape == (height, width, 3)
+
+
+def test_save_debug_detection_image_writes_file_and_marks_centroids(tmp_path):
+    image = np.zeros((50, 50), dtype=np.uint8)
+    path = str(tmp_path / "debug.png")
+
+    save_debug_detection_image(image, [(25, 25)], path)
+
+    import cv2
+    assert (tmp_path / "debug.png").exists()
+    saved = cv2.imread(path)
+    assert saved is not None
+    assert saved.shape == (50, 50, 3)  # grayscale input converted to BGR for drawing
+    # A green circle outline was drawn around (25, 25); its ring should be
+    # visible a few pixels off-center even though the exact center pixel
+    # isn't guaranteed to be on the 1px-wide circle outline itself.
+    ring_pixel = saved[25, 25 + 8]
+    assert ring_pixel.tolist() == [0, 255, 0]

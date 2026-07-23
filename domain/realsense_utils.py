@@ -76,3 +76,12 @@ def ir_bytes_to_image(raw_bytes, width, height):
 def yuyv_to_bgr(raw_bytes, width, height):
     arr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((height, width, 2))
     return cv2.cvtColor(arr, cv2.COLOR_YUV2BGR_YUYV)
+
+
+def save_debug_detection_image(image, centroids, path):
+    debug_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if len(image.shape) == 2 else image.copy()
+    for i, (x, y) in enumerate(centroids):
+        cv2.circle(debug_img, (int(x), int(y)), 8, (0, 255, 0), 1)
+        cv2.putText(debug_img, str(i), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4, (0, 0, 255), 1)
+    cv2.imwrite(path, debug_img)

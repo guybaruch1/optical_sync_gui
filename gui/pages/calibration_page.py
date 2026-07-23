@@ -2,13 +2,16 @@
 optical_sync_poc_/led_calibration.py's main()), logging progress into a
 QPlainTextEdit instead of print()."""
 
+import os
 import time
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton, QApplication
 
 from domain.calibration import assign_grid_ids, build_positions_with_thresholds, update_config_leds
-from domain.realsense_utils import detect_led_centroids, merge_close_centroids, apply_roi_mask
+from domain.realsense_utils import (
+    detect_led_centroids, merge_close_centroids, apply_roi_mask, save_debug_detection_image,
+)
 from engine.streams import ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device
 from engine.led_panel import LEDPanel
 
@@ -36,12 +39,13 @@ class CalibrationPage(QWidget):
         QApplication.processEvents()
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
-                    ir_roi, rgb_roi, config_path, camera_name,
+                    ir_roi, rgb_roi, config_path, camera_name, output_dir,
                     min_blob_area=20, neighborhood_size=5, row_gap_px=15, min_acceptable_contrast=20):
         self._pending_args = dict(
             ctx=ctx, device_serial=device_serial, ir_resolution=ir_resolution, ir_fps=ir_fps,
             color_resolution=color_resolution, color_fps=color_fps, ir_roi=ir_roi, rgb_roi=rgb_roi,
-            config_path=config_path, camera_name=camera_name, min_blob_area=min_blob_area,
+            config_path=config_path, camera_name=camera_name, output_dir=output_dir,
+            min_blob_area=min_blob_area,
             neighborhood_size=neighborhood_size, row_gap_px=row_gap_px,
             min_acceptable_contrast=min_acceptable_contrast,
         )
@@ -58,7 +62,7 @@ class CalibrationPage(QWidget):
             self.run_button.setEnabled(True)
 
     def _run_calibration(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
-                          ir_roi, rgb_roi, config_path, camera_name, min_blob_area, neighborhood_size,
+                          ir_roi, rgb_roi, config_path, camera_name, output_dir, min_blob_area, neighborhood_size,
                           row_gap_px, min_acceptable_contrast):
         stereo_sensor, rgb_sensor = get_sensors_for_device(ctx, device_serial)
         if not disable_ir_emitter(stereo_sensor):
@@ -90,12 +94,21 @@ class CalibrationPage(QWidget):
         ir_centroids, ir_otsu = detect_led_centroids(ir_masked, None, min_blob_area)
         ir_centroids = merge_close_centroids(ir_centroids)
         self._log("Detected {} LED(s) in IR (Otsu threshold {}).".format(len(ir_centroids), ir_otsu))
+        # Saved BEFORE assign_grid_ids, which raises on zero detections - this
+        # is exactly the case where seeing the masked crop matters most, so it
+        # must not be skipped by that exception.
+        ir_debug_path = os.path.join(output_dir, "debug_ir_detection.png")
+        save_debug_detection_image(ir_masked, ir_centroids, ir_debug_path)
+        self._log("Saved debug image (masked frame + detected LEDs circled): {}".format(ir_debug_path))
         ir_positions, ir_row_layout = assign_grid_ids(ir_centroids, row_gap_px)
 
         self._log("Detecting LEDs in RGB frame...")
         rgb_centroids, rgb_otsu = detect_led_centroids(rgb_masked, None, min_blob_area)
         rgb_centroids = merge_close_centroids(rgb_centroids)
         self._log("Detected {} LED(s) in RGB (Otsu threshold {}).".format(len(rgb_centroids), rgb_otsu))
+        rgb_debug_path = os.path.join(output_dir, "debug_rgb_detection.png")
+        save_debug_detection_image(rgb_masked, rgb_centroids, rgb_debug_path)
+        self._log("Saved debug image (masked frame + detected LEDs circled): {}".format(rgb_debug_path))
         rgb_positions, rgb_row_layout = assign_grid_ids(rgb_centroids, row_gap_px)
 
         if ir_row_layout != rgb_row_layout:

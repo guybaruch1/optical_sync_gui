@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         self.gui_state.ir_width, self.gui_state.ir_height, self.gui_state.ir_fps = ir_width, ir_height, ir_fps
         self.gui_state.rgb_width, self.gui_state.rgb_height, self.gui_state.rgb_fps = rgb_width, rgb_height, rgb_fps
         save_gui_state(self.gui_state)
-        self.roi_page.start_preview(
+        self.roi_page.set_context(
             self.ctx, self.gui_state.device_serial,
             (ir_width, ir_height), ir_fps, (rgb_width, rgb_height), rgb_fps,
         )
@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
             ir_roi, rgb_roi,
             config_path=self.settings["paths"]["config_path"],
             camera_name=self._current_device_name(),
+            output_dir=ensure_output_dir(self.settings),
         )
         self.stack.setCurrentWidget(self.calibration_page)
 
