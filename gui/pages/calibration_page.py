@@ -1,0 +1,108 @@
+"""Wizard step 4: runs LED calibration in-app (same steps as
+optical_sync_poc_/led_calibration.py's main()), logging progress into a
+QPlainTextEdit instead of print()."""
+
+import time
+
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton
+
+from domain.calibration import assign_grid_ids, build_positions_with_thresholds, update_config_leds
+from domain.realsense_utils import detect_led_centroids, merge_close_centroids, apply_roi_mask
+from engine.streams import ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device
+from engine.led_panel import LEDPanel
+
+
+class CalibrationPage(QWidget):
+    calibration_done = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        layout.addWidget(self.log_view)
+        self.run_button = QPushButton("Run Calibration")
+        self.run_button.clicked.connect(self._on_run_clicked)
+        layout.addWidget(self.run_button)
+        self._pending_args = None
+
+    def _log(self, message):
+        self.log_view.appendPlainText(message)
+
+    def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
+                    ir_roi, rgb_roi, config_path, camera_name,
+                    min_blob_area=20, neighborhood_size=5, row_gap_px=15, min_acceptable_contrast=20):
+        self._pending_args = dict(
+            ctx=ctx, device_serial=device_serial, ir_resolution=ir_resolution, ir_fps=ir_fps,
+            color_resolution=color_resolution, color_fps=color_fps, ir_roi=ir_roi, rgb_roi=rgb_roi,
+            config_path=config_path, camera_name=camera_name, min_blob_area=min_blob_area,
+            neighborhood_size=neighborhood_size, row_gap_px=row_gap_px,
+            min_acceptable_contrast=min_acceptable_contrast,
+        )
+
+    def _on_run_clicked(self):
+        if self._pending_args is not None:
+            self._run_calibration(**self._pending_args)
+
+    def _run_calibration(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
+                          ir_roi, rgb_roi, config_path, camera_name, min_blob_area, neighborhood_size,
+                          row_gap_px, min_acceptable_contrast):
+        stereo_sensor, rgb_sensor = get_sensors_for_device(ctx, device_serial)
+        if not disable_ir_emitter(stereo_sensor):
+            self._log("WARNING: emitter_enabled not supported - confirm the IR projector is off manually.")
+        enable_auto_exposure(rgb_sensor)
+
+        capture = ContinuousCapture(ir_resolution, ir_fps, color_resolution, color_fps)
+        capture.start()
+        frame_iter = capture.frames()
+
+        self._log("Turning on all LEDs...")
+        LEDPanel.stop()
+        LEDPanel.all_leds_on()
+        time.sleep(0.5)
+        ir_on_image, rgb_on_image, _, _ = next(frame_iter)
+
+        self._log("Turning LED panel off, capturing OFF-state frames...")
+        LEDPanel.all_leds_off()
+        time.sleep(0.5)
+        ir_off_image, rgb_off_image, _, _ = next(frame_iter)
+        capture.stop()
+
+        ir_masked = apply_roi_mask(ir_on_image, ir_roi)
+        rgb_masked = apply_roi_mask(rgb_on_image, rgb_roi)
+
+        self._log("Detecting LEDs in IR frame...")
+        ir_centroids, ir_otsu = detect_led_centroids(ir_masked, None, min_blob_area)
+        ir_centroids = merge_close_centroids(ir_centroids)
+        self._log("Detected {} LED(s) in IR (Otsu threshold {}).".format(len(ir_centroids), ir_otsu))
+        ir_positions, ir_row_layout = assign_grid_ids(ir_centroids, row_gap_px)
+
+        self._log("Detecting LEDs in RGB frame...")
+        rgb_centroids, rgb_otsu = detect_led_centroids(rgb_masked, None, min_blob_area)
+        rgb_centroids = merge_close_centroids(rgb_centroids)
+        self._log("Detected {} LED(s) in RGB (Otsu threshold {}).".format(len(rgb_centroids), rgb_otsu))
+        rgb_positions, rgb_row_layout = assign_grid_ids(rgb_centroids, row_gap_px)
+
+        if ir_row_layout != rgb_row_layout:
+            self._log(
+                "WARNING: IR row layout {} != RGB row layout {} - led_id may not match the same "
+                "physical LED in both dicts.".format(ir_row_layout, rgb_row_layout)
+            )
+
+        self._log("Computing per-LED on/off/threshold values...")
+        ir_positions = build_positions_with_thresholds(ir_positions, ir_on_image, ir_off_image, neighborhood_size)
+        rgb_positions = build_positions_with_thresholds(rgb_positions, rgb_on_image, rgb_off_image, neighborhood_size)
+
+        for label, positions in (("IR", ir_positions), ("RGB", rgb_positions)):
+            weakest_id, weakest_contrast = min(
+                ((led_id, vals[2] - vals[3]) for led_id, vals in positions.items()),
+                key=lambda pair: pair[1],
+            )
+            self._log("{} weakest LED contrast: led_id={} on-off={:.2f}".format(label, weakest_id, weakest_contrast))
+            if weakest_contrast < min_acceptable_contrast:
+                self._log("  WARNING: this LED's on/off gap is small - its threshold may be unreliable.")
+
+        update_config_leds(config_path, camera_name, ir_positions, ir_resolution, rgb_positions, color_resolution)
+        self._log("Saved {} LED positions per sensor to {}".format(len(ir_positions), config_path))
+        self.calibration_done.emit()
