@@ -16,12 +16,14 @@ standalone script relied on.
 import time
 
 import cv2
+import pyrealsense2 as rs
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
 
+from domain.realsense_utils import ir_bytes_to_image, yuyv_to_bgr
 from engine.streams import (
-    ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device,
-    capture_settled_frame_pair,
+    match_profile, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device,
+    capture_synced_frame_pair,
 )
 from engine.led_panel import LEDPanel
 
@@ -81,27 +83,34 @@ class RoiSelectPage(QWidget):
     def _capture_and_select(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                             settle_frames):
         stereo_sensor, rgb_sensor = get_sensors_for_device(ctx, device_serial)
+        ir_profile = match_profile(stereo_sensor, rs.stream.infrared, rs.format.y8, *ir_resolution, ir_fps)
+        color_profile = match_profile(rgb_sensor, rs.stream.color, rs.format.yuyv, *color_resolution, color_fps)
+
         if not disable_ir_emitter(stereo_sensor):
             self.status_label.setText(
                 "WARNING: emitter_enabled not supported - confirm the IR projector is off manually."
             )
         enable_auto_exposure(rgb_sensor)
 
-        capture = ContinuousCapture(ir_resolution, ir_fps, color_resolution, color_fps)
-        capture.start()
-        try:
-            frame_iter = capture.frames()
+        def turn_on_all_leds():
             LEDPanel.stop()
             LEDPanel.all_leds_on()
             time.sleep(0.5)  # let the panel actually reach full brightness
-            # See engine.streams.capture_settled_frame_pair's docstring: the
-            # very next frame off the pipeline can still be stale or
-            # mid-auto-exposure-adjustment, so wait for settle_frames fresh
-            # ones instead of trusting the first one after a fixed sleep.
-            ir_image, rgb_image, _, _ = capture_settled_frame_pair(frame_iter, settle_frames)
+
+        # Same capture mechanism roi_picker.py actually used - see
+        # calibration_page.py's matching comment for why this replaced the
+        # rs.pipeline()-based ContinuousCapture that was here before.
+        try:
+            ir_raw, rgb_raw = capture_synced_frame_pair(
+                stereo_sensor, ir_profile, rgb_sensor, color_profile,
+                on_both_streaming=turn_on_all_leds,
+                settle_frames=settle_frames,
+            )
         finally:
-            capture.stop()
             LEDPanel.all_leds_off()
+
+        ir_image = ir_bytes_to_image(ir_raw, *ir_resolution)
+        rgb_image = yuyv_to_bgr(rgb_raw, *color_resolution)
 
         ir_roi = _select_roi(ir_image, "IR - drag ROI, Enter=OK, C=Cancel")
         if ir_roi is None:

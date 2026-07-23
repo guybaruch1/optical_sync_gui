@@ -1,5 +1,9 @@
+import threading
+import time
+
 import pytest
-from engine.streams import list_supported_profiles, match_profile, capture_settled_frame_pair
+import pyrealsense2 as rs
+from engine.streams import list_supported_profiles, match_profile, capture_synced_frame_pair
 
 
 class FakeVideoProfile:
@@ -62,16 +66,108 @@ def test_match_profile_raises_when_nothing_matches():
         match_profile(sensor, "infrared", "y8", 1280, 720, 30)
 
 
-def test_capture_settled_frame_pair_discards_all_but_the_last():
-    frames = iter(["stale-1", "stale-2", "stale-3", "settled"])
-    result = capture_settled_frame_pair(frames, settle_frames=4)
-    assert result == "settled"
-    # Exactly 4 pulled - a 5th pull would raise StopIteration if attempted.
-    with pytest.raises(StopIteration):
-        next(frames)
+class _FakeFrame:
+    def __init__(self, stream_type, data):
+        self._stream_type = stream_type
+        self._data = data
+
+    def get_profile(self):
+        return self
+
+    def stream_type(self):
+        return self._stream_type
+
+    def get_data(self):
+        return self._data
 
 
-def test_capture_settled_frame_pair_with_one_settle_frame_returns_the_only_pull():
-    frames = iter(["only"])
-    result = capture_settled_frame_pair(frames, settle_frames=1)
-    assert result == "only"
+class _FakeStreamingSensor:
+    """Delivers frames continuously on a background thread once started,
+    like a real sensor's callback - unlike a synchronous fake, this doesn't
+    deliver everything before capture_synced_frame_pair's counter reset
+    happens, so it actually exercises the reset-then-wait-for-fresh-frames
+    control flow instead of trivially satisfying it."""
+
+    def __init__(self, stream_type):
+        self.stream_type = stream_type
+        self._running = False
+        self._thread = None
+
+    def open(self, profiles):
+        pass
+
+    def start(self, callback):
+        self._running = True
+
+        def deliver_loop():
+            counter = 0
+            while self._running:
+                counter += 1
+                callback(_FakeFrame(self.stream_type, "frame-{}".format(counter).encode()))
+                time.sleep(0.001)
+
+        self._thread = threading.Thread(target=deliver_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+
+    def close(self):
+        pass
+
+
+class _FakeNonDeliveringSensor:
+    def open(self, profiles):
+        pass
+
+    def start(self, callback):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_capture_synced_frame_pair_calls_trigger_once_and_returns_frames():
+    ir_sensor = _FakeStreamingSensor(rs.stream.infrared)
+    color_sensor = _FakeStreamingSensor(rs.stream.color)
+    triggered = {"count": 0}
+
+    def on_both_streaming():
+        triggered["count"] += 1
+
+    ir_frame, rgb_frame = capture_synced_frame_pair(
+        ir_sensor, None, color_sensor, None,
+        on_both_streaming=on_both_streaming, settle_frames=5, timeout_s=5.0,
+    )
+
+    assert triggered["count"] == 1
+    assert ir_frame is not None
+    assert rgb_frame is not None
+
+
+def test_capture_synced_frame_pair_works_without_a_trigger_callback():
+    ir_sensor = _FakeStreamingSensor(rs.stream.infrared)
+    color_sensor = _FakeStreamingSensor(rs.stream.color)
+
+    ir_frame, rgb_frame = capture_synced_frame_pair(
+        ir_sensor, None, color_sensor, None,
+        on_both_streaming=None, settle_frames=5, timeout_s=5.0,
+    )
+
+    assert ir_frame is not None
+    assert rgb_frame is not None
+
+
+def test_capture_synced_frame_pair_raises_on_timeout_when_no_frames_arrive():
+    ir_sensor = _FakeNonDeliveringSensor()
+    color_sensor = _FakeNonDeliveringSensor()
+
+    with pytest.raises(RuntimeError):
+        capture_synced_frame_pair(
+            ir_sensor, None, color_sensor, None, settle_frames=5, timeout_s=0.2,
+        )

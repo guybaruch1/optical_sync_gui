@@ -5,16 +5,18 @@ QPlainTextEdit instead of print()."""
 import os
 import time
 
+import pyrealsense2 as rs
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton, QApplication
 
 from domain.calibration import assign_grid_ids, build_positions_with_thresholds, update_config_leds
 from domain.realsense_utils import (
     detect_led_centroids, merge_close_centroids, apply_roi_mask, save_debug_detection_image,
+    ir_bytes_to_image, yuyv_to_bgr,
 )
 from engine.streams import (
-    ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device,
-    capture_settled_frame_pair,
+    match_profile, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device,
+    capture_synced_frame_pair,
 )
 from engine.led_panel import LEDPanel
 
@@ -69,31 +71,44 @@ class CalibrationPage(QWidget):
                           ir_roi, rgb_roi, config_path, camera_name, output_dir, settle_frames,
                           min_blob_area, neighborhood_size, row_gap_px, min_acceptable_contrast):
         stereo_sensor, rgb_sensor = get_sensors_for_device(ctx, device_serial)
+        ir_profile = match_profile(stereo_sensor, rs.stream.infrared, rs.format.y8, *ir_resolution, ir_fps)
+        color_profile = match_profile(rgb_sensor, rs.stream.color, rs.format.yuyv, *color_resolution, color_fps)
+
         if not disable_ir_emitter(stereo_sensor):
             self._log("WARNING: emitter_enabled not supported - confirm the IR projector is off manually.")
         enable_auto_exposure(rgb_sensor)
 
-        capture = ContinuousCapture(ir_resolution, ir_fps, color_resolution, color_fps)
-        capture.start()
-        try:
-            frame_iter = capture.frames()
-
+        def turn_on_all_leds():
             self._log("Turning on all LEDs...")
             LEDPanel.stop()
             LEDPanel.all_leds_on()
             time.sleep(0.5)  # let the panel actually reach full brightness
-            # Wait for settle_frames FRESH frames after the trigger, not just
-            # the next one off the pipeline - the very next frame can still
-            # be stale (queued before the trigger) or mid-auto-exposure-
-            # adjustment, which was a real cause of spurious 0-LEDs-detected
-            # results.
-            ir_on_image, rgb_on_image, _, _ = capture_settled_frame_pair(frame_iter, settle_frames)
 
-            self._log("Turning LED panel off, capturing OFF-state frames...")
-            LEDPanel.all_leds_off()
-            ir_off_image, rgb_off_image, _, _ = capture_settled_frame_pair(frame_iter, settle_frames)
+        # Same capture mechanism led_calibration.py actually used (raw
+        # per-sensor open/start, counting real callback deliveries to confirm
+        # settling) - NOT the rs.pipeline()-based ContinuousCapture used
+        # elsewhere in this app for continuous streaming, which produced
+        # spurious zero-LEDs-detected results when substituted in here.
+        try:
+            ir_on_raw, rgb_on_raw = capture_synced_frame_pair(
+                stereo_sensor, ir_profile, rgb_sensor, color_profile,
+                on_both_streaming=turn_on_all_leds,
+                settle_frames=settle_frames,
+            )
         finally:
-            capture.stop()
+            LEDPanel.all_leds_off()
+
+        self._log("Turning LED panel off, capturing OFF-state frames...")
+        ir_off_raw, rgb_off_raw = capture_synced_frame_pair(
+            stereo_sensor, ir_profile, rgb_sensor, color_profile,
+            on_both_streaming=None,
+            settle_frames=settle_frames,
+        )
+
+        ir_on_image = ir_bytes_to_image(ir_on_raw, *ir_resolution)
+        rgb_on_image = yuyv_to_bgr(rgb_on_raw, *color_resolution)
+        ir_off_image = ir_bytes_to_image(ir_off_raw, *ir_resolution)
+        rgb_off_image = yuyv_to_bgr(rgb_off_raw, *color_resolution)
 
         ir_masked = apply_roi_mask(ir_on_image, ir_roi)
         rgb_masked = apply_roi_mask(rgb_on_image, rgb_roi)
