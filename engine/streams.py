@@ -116,10 +116,21 @@ class ContinuousCapture:
             if not ir_frame or not color_frame:
                 continue
 
+            metadata = rs.frame_metadata_value.frame_timestamp
+            if not (ir_frame.supports_frame_metadata(metadata) and color_frame.supports_frame_metadata(metadata)):
+                raise RuntimeError(
+                    "This camera/driver does not expose per-frame HW timestamp metadata "
+                    "(frame_metadata_value.frame_timestamp), which the sync metrics require. "
+                    "On Windows, RealSense per-frame metadata is often disabled by default at "
+                    "the OS/driver level and needs a one-time enablement step (see Intel's "
+                    "librealsense documentation on Windows metadata support) - reconnect the "
+                    "camera after enabling it and retry."
+                )
+
             ir_image = ir_bytes_to_image(bytes(ir_frame.get_data()), *self.ir_resolution)
             rgb_image = yuyv_to_bgr(bytes(color_frame.get_data()), *self.color_resolution)
-            ir_ts_us = ir_frame.get_frame_metadata(getattr(rs.frame_metadata_value, "frame_timestamp"))
-            rgb_ts_us = color_frame.get_frame_metadata(getattr(rs.frame_metadata_value, "frame_timestamp"))
+            ir_ts_us = ir_frame.get_frame_metadata(metadata)
+            rgb_ts_us = color_frame.get_frame_metadata(metadata)
 
             yield ir_image, rgb_image, ir_ts_us, rgb_ts_us
 
