@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
             switch_time_ms=self.settings["test"]["switch_time_ms"],
             scan_direction=self.settings["test"]["scan_direction"],
             ir_threshold=ir_threshold, rgb_threshold=rgb_threshold, ir_xy=ir_xy, rgb_xy=rgb_xy,
-            num_leds=num_leds,
+            num_leds=num_leds, neighborhood_size=self.settings["test"]["neighborhood_size"],
             frame_drop_threshold_factor=self.settings["test"]["frame_drop_threshold_factor"],
             warmup_pairs_to_skip=self.settings["test"]["warmup_pairs_to_skip"],
             pairing_gap_outlier_threshold_us=self.settings["test"]["pairing_gap_outlier_threshold_us"],

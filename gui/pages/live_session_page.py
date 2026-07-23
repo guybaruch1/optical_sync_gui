@@ -79,6 +79,7 @@ class LiveSessionPage(QWidget):
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                     switch_time_ms, scan_direction, ir_threshold, rgb_threshold, ir_xy, rgb_xy, num_leds,
+                    neighborhood_size,
                     frame_drop_threshold_factor, warmup_pairs_to_skip, pairing_gap_outlier_threshold_us,
                     kept_csv_path, dropped_csv_path):
         self._context = dict(
@@ -86,7 +87,7 @@ class LiveSessionPage(QWidget):
             color_resolution=color_resolution, color_fps=color_fps, switch_time_ms=switch_time_ms,
             scan_direction=scan_direction,
             ir_threshold=ir_threshold, rgb_threshold=rgb_threshold, ir_xy=ir_xy, rgb_xy=rgb_xy,
-            num_leds=num_leds,
+            num_leds=num_leds, neighborhood_size=neighborhood_size,
             frame_drop_threshold_factor=frame_drop_threshold_factor,
             warmup_pairs_to_skip=warmup_pairs_to_skip,
             pairing_gap_outlier_threshold_us=pairing_gap_outlier_threshold_us,
@@ -112,7 +113,7 @@ class LiveSessionPage(QWidget):
         self.engine_thread = SessionEngineThread(
             ctx["ctx"], ctx["device_serial"], ctx["ir_resolution"], ctx["ir_fps"],
             ctx["color_resolution"], ctx["color_fps"], test_session,
-            ir_xy=ctx["ir_xy"], rgb_xy=ctx["rgb_xy"],
+            ir_xy=ctx["ir_xy"], rgb_xy=ctx["rgb_xy"], neighborhood_size=ctx["neighborhood_size"],
             scan_direction=ctx["scan_direction"], switch_time_ms=ctx["switch_time_ms"],
         )
         self.engine_thread.frame_ready.connect(self._on_frame_ready)
