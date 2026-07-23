@@ -34,6 +34,7 @@ class SessionEngineThread(QThread):
 
     def __init__(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                  test_session, ir_xy=None, rgb_xy=None, neighborhood_size=5,
+                 scan_direction=None, switch_time_ms=None,
                  display_stride=10, parent=None):
         super().__init__(parent)
         self.ctx = ctx
@@ -46,6 +47,8 @@ class SessionEngineThread(QThread):
         self.ir_xy = ir_xy
         self.rgb_xy = rgb_xy
         self.neighborhood_size = neighborhood_size
+        self.scan_direction = scan_direction
+        self.switch_time_ms = switch_time_ms
         self.display_stride = display_stride
         self._stop_requested = False
         self._capture = None
@@ -81,6 +84,20 @@ class SessionEngineThread(QThread):
             if not disable_ir_emitter(stereo_sensor):
                 self.error.emit("This sensor/firmware does not expose emitter_enabled - confirm the IR projector is off manually.")
             enable_auto_exposure(rgb_sensor)
+
+            # Puts the panel into single-LED scanning mode at the configured
+            # speed/direction and actually starts it moving - ported from
+            # pipeline_sync_test_diff.py's main(), which does this immediately
+            # before its capture loop. Without this the panel never scans at
+            # all during a live session (it's left in whatever mode
+            # calibration/ROI selection last put it in, typically off), so
+            # PositionGapMetric would only ever see misses.
+            if self.switch_time_ms is not None:
+                LEDPanel.stop()
+                LEDPanel.response_time_measurement_mode()
+                LEDPanel.set_direction_single(self.scan_direction if self.scan_direction is not None else 1)
+                LEDPanel.set_speed_ms(self.switch_time_ms)
+                LEDPanel.start()
 
             self._capture = ContinuousCapture(self.ir_resolution, self.ir_fps, self.color_resolution, self.color_fps)
             self._capture.start()

@@ -131,6 +131,7 @@ class MainWindow(QMainWindow):
             (self.gui_state.ir_width, self.gui_state.ir_height), self.gui_state.ir_fps,
             (self.gui_state.rgb_width, self.gui_state.rgb_height), self.gui_state.rgb_fps,
             switch_time_ms=self.settings["test"]["switch_time_ms"],
+            scan_direction=self.settings["test"]["scan_direction"],
             ir_threshold=ir_threshold, rgb_threshold=rgb_threshold, ir_xy=ir_xy, rgb_xy=rgb_xy,
             num_leds=num_leds,
             frame_drop_threshold_factor=self.settings["test"]["frame_drop_threshold_factor"],
