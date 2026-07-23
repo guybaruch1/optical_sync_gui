@@ -85,3 +85,24 @@ def save_debug_detection_image(image, centroids, path):
         cv2.putText(debug_img, str(i), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX,
                     0.4, (0, 0, 255), 1)
     cv2.imwrite(path, debug_img)
+
+
+def draw_bundle_overlay(image, bundle_index, ir_frame_number, color_frame_number, ir_ts_us, color_ts_us, delta_us):
+    """Burns a live pairing-quality diagnostic overlay (bundle counter,
+    each stream's own HW frame number, HW timestamps, and their delta) onto
+    a copy of the given frame - used by the Stream Config page's live
+    preview so pairing quality can be sanity-checked by eye for a given
+    resolution/fps before committing to it in the wizard."""
+    debug_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if len(image.shape) == 2 else image.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    lines = [
+        ("Bundle: {}".format(bundle_index), (0, 255, 0)),
+        ("IR Frame: {}  |  Color Frame: {}".format(ir_frame_number, color_frame_number), (0, 255, 255)),
+        ("IR Timestamp: {:.0f}  |  Color Timestamp: {:.0f}".format(ir_ts_us, color_ts_us), (0, 255, 255)),
+        ("Delta: {:.1f} us".format(delta_us), (255, 255, 0)),
+    ]
+    y = 25
+    for text, color in lines:
+        cv2.putText(debug_img, text, (10, y), font, 0.6, color, 2)
+        y += 25
+    return debug_img

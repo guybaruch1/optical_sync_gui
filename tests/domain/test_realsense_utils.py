@@ -7,6 +7,7 @@ from domain.realsense_utils import (
     ir_bytes_to_image,
     yuyv_to_bgr,
     save_debug_detection_image,
+    draw_bundle_overlay,
 )
 
 
@@ -86,3 +87,28 @@ def test_save_debug_detection_image_writes_file_and_marks_centroids(tmp_path):
     # isn't guaranteed to be on the 1px-wide circle outline itself.
     ring_pixel = saved[25, 25 + 8]
     assert ring_pixel.tolist() == [0, 255, 0]
+
+
+def test_draw_bundle_overlay_converts_grayscale_and_draws_text():
+    image = np.zeros((100, 300), dtype=np.uint8)
+
+    result = draw_bundle_overlay(
+        image, bundle_index=1690, ir_frame_number=1950, color_frame_number=1958,
+        ir_ts_us=4287559946, color_ts_us=4287559980, delta_us=-34.0,
+    )
+
+    assert result.shape == (100, 300, 3)  # grayscale input converted to BGR for drawing
+    assert result is not image  # never mutates the caller's array
+    assert (result > 0).any()  # some text pixels were actually drawn
+
+
+def test_draw_bundle_overlay_does_not_mutate_bgr_input():
+    image = np.zeros((100, 300, 3), dtype=np.uint8)
+
+    result = draw_bundle_overlay(
+        image, bundle_index=0, ir_frame_number=0, color_frame_number=0,
+        ir_ts_us=0.0, color_ts_us=0.0, delta_us=0.0,
+    )
+
+    assert (image == 0).all()  # original untouched
+    assert (result > 0).any()  # the copy has the drawn text

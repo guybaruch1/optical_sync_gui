@@ -197,6 +197,16 @@ class ContinuousCapture:
         self._pipeline.start(config)
 
     def frames(self):
+        for ir_image, rgb_image, ir_ts_us, rgb_ts_us, _, _ in self.frames_with_diagnostics():
+            yield ir_image, rgb_image, ir_ts_us, rgb_ts_us
+
+    def frames_with_diagnostics(self):
+        """Like frames(), but also yields each stream's own HW frame-number
+        counter (frame.get_frame_number()) - not needed by the metrics
+        pipeline frames() serves, but useful for the Stream Config page's
+        live pairing-quality preview, which shows these numbers directly to
+        the operator to sanity-check pairing before committing to a
+        resolution/fps."""
         from domain.realsense_utils import ir_bytes_to_image, yuyv_to_bgr
 
         while True:
@@ -221,8 +231,10 @@ class ContinuousCapture:
             rgb_image = yuyv_to_bgr(bytes(color_frame.get_data()), *self.color_resolution)
             ir_ts_us = ir_frame.get_frame_metadata(metadata)
             rgb_ts_us = color_frame.get_frame_metadata(metadata)
+            ir_frame_number = ir_frame.get_frame_number()
+            color_frame_number = color_frame.get_frame_number()
 
-            yield ir_image, rgb_image, ir_ts_us, rgb_ts_us
+            yield ir_image, rgb_image, ir_ts_us, rgb_ts_us, ir_frame_number, color_frame_number
 
     def stop(self):
         if self._pipeline is not None:

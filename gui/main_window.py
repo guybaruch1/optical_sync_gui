@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         preferred_rgb = (
             camera_settings["color"]["width"], camera_settings["color"]["height"], camera_settings["color"]["fps"],
         )
-        self.stream_config_page.populate(stereo_sensor, rgb_sensor, preferred_ir, preferred_rgb)
+        self.stream_config_page.populate(self.ctx, serial, stereo_sensor, rgb_sensor, preferred_ir, preferred_rgb)
         self.stack.setCurrentWidget(self.stream_config_page)
 
     def _on_config_chosen(self, config):
