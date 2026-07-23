@@ -3,14 +3,11 @@ curve for PairingGapMetric, one for PositionGapMetric) so the GUI never
 has to special-case which metrics exist - see engine.metrics.Metric."""
 
 import pyqtgraph as pg
-from PySide6.QtWidgets import QSizePolicy
 
 
 class LivePlot(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumSize(200, 150)
         self.showGrid(x=True, y=True, alpha=0.3)
         self._curves = {}
         self._x_data = {}

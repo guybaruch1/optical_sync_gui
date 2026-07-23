@@ -19,8 +19,11 @@ def main():
     settings = load_settings()
 
     window = MainWindow(ctx, gui_state, settings)
-    window.resize(1200, 800)
-    window.show()
+    # Maximized (not a fixed resize()) so the window - and everything in
+    # it, now that VideoPanel/LivePlot have sane size policies - actually
+    # uses the available screen space instead of a hardcoded pixel size
+    # that may be too big or too small for a given monitor.
+    window.showMaximized()
 
     sys.exit(app.exec())
 

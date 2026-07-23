@@ -1,14 +1,30 @@
 """Displays a live numpy frame (grayscale IR or BGR RGB) as a QLabel."""
 
 import cv2
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QSizePolicy
 
 
 class VideoPanel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setScaledContents(True)
+        # Without this, QLabel's sizeHint() defaults to the pixmap's native
+        # resolution (e.g. 1280x720) once a frame is set, so two side-by-side
+        # panels push the window/layout to grow to fit the camera's actual
+        # resolution. Expanding (not Ignored - that doesn't request any extra
+        # space, so this widget would just get squeezed to its minimum
+        # whenever it shares a layout with another Expanding widget, like the
+        # live plot) makes this widget actively compete for available space;
+        # sizeHint() below caps the "preferred" baseline at something modest
+        # instead of the native resolution, and setScaledContents(True)
+        # stretches whatever frame arrives to fill whatever size results.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(160, 120)
+
+    def sizeHint(self):
+        return QSize(320, 240)
 
     def set_frame(self, image):
         if image.ndim == 2:
