@@ -23,17 +23,31 @@ class StreamConfigPage(QWidget):
         self.next_button.clicked.connect(self._on_next_clicked)
         layout.addWidget(self.next_button)
 
-    def populate(self, stereo_sensor, rgb_sensor):
+    def populate(self, stereo_sensor, rgb_sensor, preferred_ir=None, preferred_rgb=None):
+        """preferred_ir/preferred_rgb are optional (width, height, fps) tuples
+        (e.g. from settings.yaml's camera.ir/camera.color) - if the connected
+        camera actually reports that exact combo, it's pre-selected in the
+        dropdown instead of leaving it at whatever comes first; the user can
+        still pick something else if it doesn't suit this rig/camera."""
         ir_profiles = list_supported_profiles(stereo_sensor, rs.stream.infrared, rs.format.y8)
         rgb_profiles = list_supported_profiles(rgb_sensor, rs.stream.color, rs.format.yuyv)
 
         self.ir_combo.clear()
         for width, height, fps in ir_profiles:
             self.ir_combo.addItem("{}x{}@{}fps".format(width, height, fps), userData=(width, height, fps))
+        self._preselect(self.ir_combo, preferred_ir)
 
         self.rgb_combo.clear()
         for width, height, fps in rgb_profiles:
             self.rgb_combo.addItem("{}x{}@{}fps".format(width, height, fps), userData=(width, height, fps))
+        self._preselect(self.rgb_combo, preferred_rgb)
+
+    def _preselect(self, combo, preferred):
+        if preferred is None:
+            return
+        index = combo.findData(tuple(preferred))
+        if index != -1:
+            combo.setCurrentIndex(index)
 
     def _on_next_clicked(self):
         ir_choice = self.ir_combo.currentData()

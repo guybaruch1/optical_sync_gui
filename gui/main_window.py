@@ -51,7 +51,12 @@ class MainWindow(QMainWindow):
         self.gui_state.device_serial = serial
         save_gui_state(self.gui_state)
         stereo_sensor, rgb_sensor = get_sensors_for_device(self.ctx, serial)
-        self.stream_config_page.populate(stereo_sensor, rgb_sensor)
+        camera_settings = self.settings["camera"]
+        preferred_ir = (camera_settings["ir"]["width"], camera_settings["ir"]["height"], camera_settings["ir"]["fps"])
+        preferred_rgb = (
+            camera_settings["color"]["width"], camera_settings["color"]["height"], camera_settings["color"]["fps"],
+        )
+        self.stream_config_page.populate(stereo_sensor, rgb_sensor, preferred_ir, preferred_rgb)
         self.stack.setCurrentWidget(self.stream_config_page)
 
     def _on_config_chosen(self, config):

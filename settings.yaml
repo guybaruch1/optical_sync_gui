@@ -7,10 +7,10 @@
 # are safe to rely on.
 
 camera:
-  # Must match a profile the sensor actually reports (see realsense_utils.match_profile).
-  # NOTE: not currently read by the GUI - the Stream Config wizard page lets
-  # you pick resolution/fps live from whatever the connected camera reports
-  # instead of defaulting from here. Kept here for documentation/reference.
+  # Used as the PRE-SELECTED default in the Stream Config wizard page's
+  # dropdowns, if the connected camera actually reports this exact combo -
+  # you can still pick a different one there if this rig/camera doesn't
+  # support it (e.g. no HD@30fps on some models). Not a hard requirement.
   ir: {width: 1280, height: 720, fps: 30}
   color: {width: 1280, height: 720, fps: 30}
 
