@@ -1,5 +1,5 @@
 import pytest
-from engine.streams import list_supported_profiles, match_profile
+from engine.streams import list_supported_profiles, match_profile, capture_settled_frame_pair
 
 
 class FakeVideoProfile:
@@ -60,3 +60,18 @@ def test_match_profile_raises_when_nothing_matches():
     sensor = FakeSensor(profiles=[FakeProfile("infrared", "y8", 640, 480, 60)])
     with pytest.raises(RuntimeError):
         match_profile(sensor, "infrared", "y8", 1280, 720, 30)
+
+
+def test_capture_settled_frame_pair_discards_all_but_the_last():
+    frames = iter(["stale-1", "stale-2", "stale-3", "settled"])
+    result = capture_settled_frame_pair(frames, settle_frames=4)
+    assert result == "settled"
+    # Exactly 4 pulled - a 5th pull would raise StopIteration if attempted.
+    with pytest.raises(StopIteration):
+        next(frames)
+
+
+def test_capture_settled_frame_pair_with_one_settle_frame_returns_the_only_pull():
+    frames = iter(["only"])
+    result = capture_settled_frame_pair(frames, settle_frames=1)
+    assert result == "only"

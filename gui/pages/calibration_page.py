@@ -12,7 +12,10 @@ from domain.calibration import assign_grid_ids, build_positions_with_thresholds,
 from domain.realsense_utils import (
     detect_led_centroids, merge_close_centroids, apply_roi_mask, save_debug_detection_image,
 )
-from engine.streams import ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device
+from engine.streams import (
+    ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device,
+    capture_settled_frame_pair,
+)
 from engine.led_panel import LEDPanel
 
 
@@ -40,12 +43,13 @@ class CalibrationPage(QWidget):
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                     ir_roi, rgb_roi, config_path, camera_name, output_dir,
-                    min_blob_area=20, neighborhood_size=5, row_gap_px=15, min_acceptable_contrast=20):
+                    settle_frames=15, min_blob_area=20, neighborhood_size=5, row_gap_px=15,
+                    min_acceptable_contrast=20):
         self._pending_args = dict(
             ctx=ctx, device_serial=device_serial, ir_resolution=ir_resolution, ir_fps=ir_fps,
             color_resolution=color_resolution, color_fps=color_fps, ir_roi=ir_roi, rgb_roi=rgb_roi,
             config_path=config_path, camera_name=camera_name, output_dir=output_dir,
-            min_blob_area=min_blob_area,
+            settle_frames=settle_frames, min_blob_area=min_blob_area,
             neighborhood_size=neighborhood_size, row_gap_px=row_gap_px,
             min_acceptable_contrast=min_acceptable_contrast,
         )
@@ -62,8 +66,8 @@ class CalibrationPage(QWidget):
             self.run_button.setEnabled(True)
 
     def _run_calibration(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
-                          ir_roi, rgb_roi, config_path, camera_name, output_dir, min_blob_area, neighborhood_size,
-                          row_gap_px, min_acceptable_contrast):
+                          ir_roi, rgb_roi, config_path, camera_name, output_dir, settle_frames,
+                          min_blob_area, neighborhood_size, row_gap_px, min_acceptable_contrast):
         stereo_sensor, rgb_sensor = get_sensors_for_device(ctx, device_serial)
         if not disable_ir_emitter(stereo_sensor):
             self._log("WARNING: emitter_enabled not supported - confirm the IR projector is off manually.")
@@ -77,13 +81,17 @@ class CalibrationPage(QWidget):
             self._log("Turning on all LEDs...")
             LEDPanel.stop()
             LEDPanel.all_leds_on()
-            time.sleep(0.5)
-            ir_on_image, rgb_on_image, _, _ = next(frame_iter)
+            time.sleep(0.5)  # let the panel actually reach full brightness
+            # Wait for settle_frames FRESH frames after the trigger, not just
+            # the next one off the pipeline - the very next frame can still
+            # be stale (queued before the trigger) or mid-auto-exposure-
+            # adjustment, which was a real cause of spurious 0-LEDs-detected
+            # results.
+            ir_on_image, rgb_on_image, _, _ = capture_settled_frame_pair(frame_iter, settle_frames)
 
             self._log("Turning LED panel off, capturing OFF-state frames...")
             LEDPanel.all_leds_off()
-            time.sleep(0.5)
-            ir_off_image, rgb_off_image, _, _ = next(frame_iter)
+            ir_off_image, rgb_off_image, _, _ = capture_settled_frame_pair(frame_iter, settle_frames)
         finally:
             capture.stop()
 

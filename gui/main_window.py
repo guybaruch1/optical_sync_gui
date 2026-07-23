@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.roi_page.set_context(
             self.ctx, self.gui_state.device_serial,
             (ir_width, ir_height), ir_fps, (rgb_width, rgb_height), rgb_fps,
+            settle_frames=self.settings["calibration"]["settle_frames"],
         )
         self.stack.setCurrentWidget(self.roi_page)
 
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self.gui_state.ir_roi = list(ir_roi)
         self.gui_state.rgb_roi = list(rgb_roi)
         save_gui_state(self.gui_state)
+        calib_settings = self.settings["calibration"]
         self.calibration_page.set_context(
             self.ctx, self.gui_state.device_serial,
             (self.gui_state.ir_width, self.gui_state.ir_height), self.gui_state.ir_fps,
@@ -78,6 +80,11 @@ class MainWindow(QMainWindow):
             config_path=self.settings["paths"]["config_path"],
             camera_name=self._current_device_name(),
             output_dir=ensure_output_dir(self.settings),
+            settle_frames=calib_settings["settle_frames"],
+            min_blob_area=calib_settings["min_blob_area"],
+            neighborhood_size=calib_settings["neighborhood_size"],
+            row_gap_px=calib_settings["row_gap_px"],
+            min_acceptable_contrast=calib_settings["min_acceptable_contrast"],
         )
         self.stack.setCurrentWidget(self.calibration_page)
 

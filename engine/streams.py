@@ -74,6 +74,26 @@ def match_profile(sensor, stream_type, fmt, width, height, fps):
     )
 
 
+def capture_settled_frame_pair(frame_iter, settle_frames):
+    """Pulls `settle_frames` fresh pairs from an open ContinuousCapture.frames()
+    generator and returns the last one, discarding the rest.
+
+    Ported behavior from optical_sync_poc_/realsense_utils.py's
+    capture_synced_frame_pair: after a trigger (e.g. turning the LED panel
+    on/off), the very next frame the pipeline hands back can still be a
+    stale frame that was already queued before the trigger took effect, or
+    one captured mid-auto-exposure-adjustment. Waiting for `settle_frames`
+    fresh pairs and keeping only the last one is what makes the captured
+    frame actually reflect the post-trigger state - taking just one frame
+    right after a fixed sleep (with no discard) does not give that
+    guarantee and was a real cause of spurious zero-LED-detected results.
+    """
+    result = None
+    for _ in range(settle_frames):
+        result = next(frame_iter)
+    return result
+
+
 def disable_ir_emitter(stereo_sensor):
     if stereo_sensor.supports(rs.option.emitter_enabled):
         stereo_sensor.set_option(rs.option.emitter_enabled, 0)
