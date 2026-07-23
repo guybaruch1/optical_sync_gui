@@ -1,5 +1,6 @@
 """Wizard step 2: pick FPS/resolution for the IR and RGB streams."""
 
+import pyrealsense2 as rs
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton
 
@@ -23,8 +24,8 @@ class StreamConfigPage(QWidget):
         layout.addWidget(self.next_button)
 
     def populate(self, stereo_sensor, rgb_sensor):
-        ir_profiles = list_supported_profiles(stereo_sensor, "infrared", "y8")
-        rgb_profiles = list_supported_profiles(rgb_sensor, "color", "yuyv")
+        ir_profiles = list_supported_profiles(stereo_sensor, rs.stream.infrared, rs.format.y8)
+        rgb_profiles = list_supported_profiles(rgb_sensor, rs.stream.color, rs.format.yuyv)
 
         self.ir_combo.clear()
         for width, height, fps in ir_profiles:
