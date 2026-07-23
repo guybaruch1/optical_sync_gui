@@ -1,0 +1,121 @@
+"""Wizard shell: Device select -> Stream config -> ROI select ->
+Calibration -> Live session, in a QStackedWidget, persisting choices to
+state.gui_state as the user moves through the wizard."""
+
+import os
+
+import numpy as np
+from PySide6.QtWidgets import QMainWindow, QStackedWidget
+
+from gui.pages.device_select_page import DeviceSelectPage
+from gui.pages.stream_config_page import StreamConfigPage
+from gui.pages.roi_select_page import RoiSelectPage
+from gui.pages.calibration_page import CalibrationPage
+from gui.pages.live_session_page import LiveSessionPage
+from state.gui_state import GuiState, save_gui_state
+from engine.streams import get_sensors_for_device
+from domain.calibration import load_led_positions
+from settings import ensure_output_dir
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, ctx, gui_state: GuiState, settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Optical Sync GUI")
+        self.ctx = ctx
+        self.gui_state = gui_state
+        self.settings = settings
+
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+        self.device_page = DeviceSelectPage()
+        self.stream_config_page = StreamConfigPage()
+        self.roi_page = RoiSelectPage()
+        self.calibration_page = CalibrationPage()
+        self.live_session_page = LiveSessionPage()
+
+        for page in (self.device_page, self.stream_config_page, self.roi_page,
+                     self.calibration_page, self.live_session_page):
+            self.stack.addWidget(page)
+
+        self.device_page.device_chosen.connect(self._on_device_chosen)
+        self.stream_config_page.config_chosen.connect(self._on_config_chosen)
+        self.roi_page.roi_chosen.connect(self._on_roi_chosen)
+        self.calibration_page.calibration_done.connect(self._on_calibration_done)
+
+        self.device_page.refresh_devices(self.ctx)
+        self.stack.setCurrentWidget(self.device_page)
+
+    def _on_device_chosen(self, serial):
+        self.gui_state.device_serial = serial
+        save_gui_state(self.gui_state)
+        stereo_sensor, rgb_sensor = get_sensors_for_device(self.ctx, serial)
+        self.stream_config_page.populate(stereo_sensor, rgb_sensor)
+        self.stack.setCurrentWidget(self.stream_config_page)
+
+    def _on_config_chosen(self, config):
+        ir_width, ir_height, ir_fps, rgb_width, rgb_height, rgb_fps = config
+        self.gui_state.ir_width, self.gui_state.ir_height, self.gui_state.ir_fps = ir_width, ir_height, ir_fps
+        self.gui_state.rgb_width, self.gui_state.rgb_height, self.gui_state.rgb_fps = rgb_width, rgb_height, rgb_fps
+        save_gui_state(self.gui_state)
+        self.roi_page.start_preview(
+            self.ctx, self.gui_state.device_serial,
+            (ir_width, ir_height), ir_fps, (rgb_width, rgb_height), rgb_fps,
+        )
+        self.stack.setCurrentWidget(self.roi_page)
+
+    def _on_roi_chosen(self, rois):
+        ir_roi, rgb_roi = rois
+        self.gui_state.ir_roi = list(ir_roi)
+        self.gui_state.rgb_roi = list(rgb_roi)
+        save_gui_state(self.gui_state)
+        self.calibration_page.set_context(
+            self.ctx, self.gui_state.device_serial,
+            (self.gui_state.ir_width, self.gui_state.ir_height), self.gui_state.ir_fps,
+            (self.gui_state.rgb_width, self.gui_state.rgb_height), self.gui_state.rgb_fps,
+            ir_roi, rgb_roi,
+            config_path=self.settings["paths"]["config_path"],
+            camera_name=self._current_device_name(),
+        )
+        self.stack.setCurrentWidget(self.calibration_page)
+
+    def _on_calibration_done(self):
+        camera_name = self._current_device_name()
+        config_path = self.settings["paths"]["config_path"]
+        ir_positions, rgb_positions = load_led_positions(config_path, camera_name)
+
+        ir_ids = list(ir_positions.keys())
+        rgb_ids = list(rgb_positions.keys())
+        ir_xy = np.array([ir_positions[i][:2] for i in ir_ids])
+        rgb_xy = np.array([rgb_positions[i][:2] for i in rgb_ids])
+        ir_on = np.array([ir_positions[i][2] for i in ir_ids])
+        ir_off = np.array([ir_positions[i][3] for i in ir_ids])
+        rgb_on = np.array([rgb_positions[i][2] for i in rgb_ids])
+        rgb_off = np.array([rgb_positions[i][3] for i in rgb_ids])
+
+        threshold_fraction = self.settings["test"]["threshold_fraction"]
+        ir_threshold = ir_off + threshold_fraction * (ir_on - ir_off)
+        rgb_threshold = rgb_off + threshold_fraction * (rgb_on - rgb_off)
+
+        output_dir = ensure_output_dir(self.settings)
+        self.live_session_page.set_context(
+            self.ctx, self.gui_state.device_serial,
+            (self.gui_state.ir_width, self.gui_state.ir_height), self.gui_state.ir_fps,
+            (self.gui_state.rgb_width, self.gui_state.rgb_height), self.gui_state.rgb_fps,
+            switch_time_ms=self.settings["test"]["switch_time_ms"],
+            ir_threshold=ir_threshold, rgb_threshold=rgb_threshold, ir_xy=ir_xy, rgb_xy=rgb_xy,
+            num_leds=self.settings["test"]["num_leds"],
+            frame_drop_threshold_factor=self.settings["test"]["frame_drop_threshold_factor"],
+            warmup_pairs_to_skip=self.settings["test"]["warmup_pairs_to_skip"],
+            pairing_gap_outlier_threshold_us=self.settings["test"]["pairing_gap_outlier_threshold_us"],
+            kept_csv_path=os.path.join(output_dir, self.settings["paths"]["raw_csv_path"]),
+            dropped_csv_path=os.path.join(output_dir, self.settings["paths"]["frame_drop_csv_path"]),
+        )
+        self.stack.setCurrentWidget(self.live_session_page)
+
+    def _current_device_name(self):
+        for device in self.device_page._devices:
+            if device.serial == self.gui_state.device_serial:
+                return device.name
+        raise RuntimeError("Selected device serial no longer connected")
