@@ -5,7 +5,7 @@ state.gui_state as the user moves through the wizard."""
 import os
 
 import numpy as np
-from PySide6.QtWidgets import QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QMainWindow, QStackedWidget, QMessageBox
 
 from gui.pages.device_select_page import DeviceSelectPage
 from gui.pages.stream_config_page import StreamConfigPage
@@ -89,6 +89,20 @@ class MainWindow(QMainWindow):
         rgb_ids = list(rgb_positions.keys())
         ir_xy = np.array([ir_positions[i][:2] for i in ir_ids])
         rgb_xy = np.array([rgb_positions[i][:2] for i in rgb_ids])
+
+        num_leds = self.settings["test"]["num_leds"]
+        if len(ir_ids) != len(rgb_ids) or len(ir_ids) != num_leds:
+            QMessageBox.warning(
+                self,
+                "LED count mismatch",
+                "Calibration detected {} IR LED(s) and {} RGB LED(s), but settings.yaml's "
+                "test.num_leds is {}. The live session's position-gap math assumes all three "
+                "match - proceeding anyway, but treat position-gap results with caution until "
+                "this is resolved (re-run calibration, or fix test.num_leds).".format(
+                    len(ir_ids), len(rgb_ids), num_leds
+                ),
+            )
+
         ir_on = np.array([ir_positions[i][2] for i in ir_ids])
         ir_off = np.array([ir_positions[i][3] for i in ir_ids])
         rgb_on = np.array([rgb_positions[i][2] for i in rgb_ids])
@@ -105,7 +119,7 @@ class MainWindow(QMainWindow):
             (self.gui_state.rgb_width, self.gui_state.rgb_height), self.gui_state.rgb_fps,
             switch_time_ms=self.settings["test"]["switch_time_ms"],
             ir_threshold=ir_threshold, rgb_threshold=rgb_threshold, ir_xy=ir_xy, rgb_xy=rgb_xy,
-            num_leds=self.settings["test"]["num_leds"],
+            num_leds=num_leds,
             frame_drop_threshold_factor=self.settings["test"]["frame_drop_threshold_factor"],
             warmup_pairs_to_skip=self.settings["test"]["warmup_pairs_to_skip"],
             pairing_gap_outlier_threshold_us=self.settings["test"]["pairing_gap_outlier_threshold_us"],

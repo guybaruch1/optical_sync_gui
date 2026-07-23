@@ -5,7 +5,7 @@ QPlainTextEdit instead of print()."""
 import time
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton, QApplication
 
 from domain.calibration import assign_grid_ids, build_positions_with_thresholds, update_config_leds
 from domain.realsense_utils import detect_led_centroids, merge_close_centroids, apply_roi_mask
@@ -29,6 +29,11 @@ class CalibrationPage(QWidget):
 
     def _log(self, message):
         self.log_view.appendPlainText(message)
+        # _run_calibration runs synchronously on the GUI thread (one blocking
+        # procedure a human watches once per rig setup, not worth a full
+        # QThread rewrite) - processEvents() lets Qt repaint the log between
+        # steps instead of the whole log appearing at once when it returns.
+        QApplication.processEvents()
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                     ir_roi, rgb_roi, config_path, camera_name,
@@ -42,8 +47,15 @@ class CalibrationPage(QWidget):
         )
 
     def _on_run_clicked(self):
-        if self._pending_args is not None:
+        if self._pending_args is None:
+            return
+        self.run_button.setEnabled(False)
+        try:
             self._run_calibration(**self._pending_args)
+        except Exception as exc:
+            self._log("Calibration failed: {}".format(exc))
+        finally:
+            self.run_button.setEnabled(True)
 
     def _run_calibration(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                           ir_roi, rgb_roi, config_path, camera_name, min_blob_area, neighborhood_size,
@@ -55,19 +67,21 @@ class CalibrationPage(QWidget):
 
         capture = ContinuousCapture(ir_resolution, ir_fps, color_resolution, color_fps)
         capture.start()
-        frame_iter = capture.frames()
+        try:
+            frame_iter = capture.frames()
 
-        self._log("Turning on all LEDs...")
-        LEDPanel.stop()
-        LEDPanel.all_leds_on()
-        time.sleep(0.5)
-        ir_on_image, rgb_on_image, _, _ = next(frame_iter)
+            self._log("Turning on all LEDs...")
+            LEDPanel.stop()
+            LEDPanel.all_leds_on()
+            time.sleep(0.5)
+            ir_on_image, rgb_on_image, _, _ = next(frame_iter)
 
-        self._log("Turning LED panel off, capturing OFF-state frames...")
-        LEDPanel.all_leds_off()
-        time.sleep(0.5)
-        ir_off_image, rgb_off_image, _, _ = next(frame_iter)
-        capture.stop()
+            self._log("Turning LED panel off, capturing OFF-state frames...")
+            LEDPanel.all_leds_off()
+            time.sleep(0.5)
+            ir_off_image, rgb_off_image, _, _ = next(frame_iter)
+        finally:
+            capture.stop()
 
         ir_masked = apply_roi_mask(ir_on_image, ir_roi)
         rgb_masked = apply_roi_mask(rgb_on_image, rgb_roi)

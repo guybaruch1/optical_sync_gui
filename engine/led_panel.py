@@ -30,7 +30,7 @@ class LEDPanel:
             try:
                 check_call(cmd)
                 retries = 0
-            except CalledProcessError as e:
+            except (CalledProcessError, FileNotFoundError) as e:
                 _logger.error("Command returned with an error: %s", e)
                 _logger.info("Retries left: %d", retries - 1)
                 retries -= 1

@@ -9,6 +9,7 @@ class VideoPanel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setScaledContents(True)
+        self.image_size = None  # (width, height) of the last frame passed to set_frame
 
     def set_frame(self, image):
         if image.ndim == 2:
@@ -18,4 +19,5 @@ class VideoPanel(QLabel):
             rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             height, width, _ = rgb.shape
             qimage = QImage(rgb.data, width, height, 3 * width, QImage.Format_RGB888)
+        self.image_size = (width, height)
         self.setPixmap(QPixmap.fromImage(qimage.copy()))

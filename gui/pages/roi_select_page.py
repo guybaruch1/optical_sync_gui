@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from gui.widgets.video_panel import VideoPanel
 from engine.session_engine import SessionEngineThread
 from engine.test_session import TestSession, TestSessionConfig
+from domain.roi_mapping import widget_rect_to_image_roi
 
 
 class _DraggableVideoPanel(VideoPanel):
@@ -29,8 +30,13 @@ class _DraggableVideoPanel(VideoPanel):
     def mouseReleaseEvent(self, event):
         if self._origin is not None:
             rect = QRect(self._origin, event.pos()).normalized()
-            self.roi = (rect.x(), rect.y(), rect.width(), rect.height())
             self._origin = None
+            if rect.width() <= 0 or rect.height() <= 0 or self.image_size is None:
+                return
+            widget_size = (self.width(), self.height())
+            self.roi = widget_rect_to_image_roi(
+                (rect.x(), rect.y(), rect.width(), rect.height()), widget_size, self.image_size,
+            )
 
 
 class RoiSelectPage(QWidget):
@@ -52,6 +58,9 @@ class RoiSelectPage(QWidget):
         self.next_button.clicked.connect(self._on_next_clicked)
         layout.addWidget(self.next_button)
 
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+
     def start_preview(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps):
         test_session = TestSession(TestSessionConfig(metrics=[]))
         test_session.start()
@@ -59,6 +68,8 @@ class RoiSelectPage(QWidget):
             ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps, test_session,
         )
         self.engine_thread.frame_ready.connect(self._on_frame_ready)
+        self.engine_thread.error.connect(self._on_error)
+        self.status_label.setText("")
         self.engine_thread.start()
 
     def stop_preview(self):
@@ -72,6 +83,9 @@ class RoiSelectPage(QWidget):
             self.ir_panel.set_frame(image)
         else:
             self.rgb_panel.set_frame(image)
+
+    def _on_error(self, message):
+        self.status_label.setText("Error: {}".format(message))
 
     def _on_next_clicked(self):
         if self.ir_panel.roi is not None and self.rgb_panel.roi is not None:
