@@ -1,5 +1,6 @@
+import math
 import os
-from domain.plot_export import export_session_plot
+from domain.plot_export import export_session_plot, _to_plot_value
 
 
 def _row(pair_index, pairing_gap=None, position_gap=None, exclude_reason=None):
@@ -31,3 +32,19 @@ def test_export_session_plot_handles_empty_rows(tmp_path):
     export_session_plot([], path)
 
     assert os.path.exists(path)
+
+
+def test_to_plot_value_passes_through_clean_values():
+    assert _to_plot_value(12.5, excluded=False) == 12.5
+
+
+def test_to_plot_value_nans_out_excluded_values():
+    # An excluded pair can still carry a wild real number (e.g. a
+    # syncer_outlier's pairing gap, or a frame_drop-excluded position gap) -
+    # this must become NaN so it breaks the line instead of dragging the
+    # whole plot's y-axis to its scale.
+    assert math.isnan(_to_plot_value(-237185.0, excluded=True))
+
+
+def test_to_plot_value_nans_out_none():
+    assert math.isnan(_to_plot_value(None, excluded=False))

@@ -16,8 +16,16 @@ import matplotlib.pyplot as plt
 
 def export_session_plot(rows, path):
     pair_indices = [row["pair_index"] for row in rows]
-    pairing_gap = [_to_plot_value(row.get("pairing_gap_us")) for row in rows]
-    position_gap = [_to_plot_value(row.get("position_gap_ms")) for row in rows]
+    # Excluded pairs (syncer_outlier / frame_drop / warmup / miss) can carry
+    # wild values (e.g. a multi-hundred-thousand-us pairing gap during the
+    # initial auto-exposure warmup) - plotting them would force the y-axis
+    # to that scale and flatten every legitimate value into an invisible
+    # line near zero, exactly like optical_sync_poc_/pipeline_sync_test_diff.py's
+    # plot_position_gap_over_time avoids via `np.where(valid, gap_ms, nan)`.
+    # NaN here does the same job: matplotlib breaks the line instead of
+    # plotting or connecting through a known-bad point.
+    pairing_gap = [_to_plot_value(row.get("pairing_gap_us"), row.get("pairing_gap_us_excluded")) for row in rows]
+    position_gap = [_to_plot_value(row.get("position_gap_ms"), row.get("position_gap_ms_excluded")) for row in rows]
 
     # Per-pair delta (0/1), not a running total - one spike exactly where a
     # drop happened, so it reads against the gap lines above on the same
@@ -46,5 +54,5 @@ def export_session_plot(rows, path):
     plt.close(fig)
 
 
-def _to_plot_value(value):
-    return value if value is not None else float("nan")
+def _to_plot_value(value, excluded):
+    return value if (value is not None and not excluded) else float("nan")

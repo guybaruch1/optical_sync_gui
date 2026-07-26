@@ -1,16 +1,24 @@
 """Wizard step 5 - the live sync-test view: dual video panels (each
 showing a live LED on/off detection overlay), a togglable/stacked live
-plot of both metrics, a dual-axis HW-timestamp-gap vs. frame-drop-count
-graph, a live stats sidebar, and Start/Stop with an optional fixed
-duration. Saves periodic LED on/off debug snapshots during the run
-(every settings.yaml test.snapshot_every_n_pairs pairs, capped at
-test.max_snapshots per stream, filename includes the pair_index so it
-can be cross-checked against what was on screen and against the CSV's
-pair_index column). At Stop, writes the CSVs
-(domain.csv_export.export_session_csvs), a static end-of-run plot image
-(domain.plot_export.export_session_plot), and one final LED on/off debug
-snapshot for each stream - the same final snapshot can also be saved on
-demand mid-session via the "Save Debug Snapshot" button."""
+plot of both metrics, a separate frame-drops-per-pair plot, a live stats
+sidebar, and Start/Stop with an optional fixed duration. Saves periodic
+LED on/off debug snapshots during the run (every settings.yaml
+test.snapshot_every_n_pairs pairs, capped at test.max_snapshots per
+stream, filename includes the pair_index so it can be cross-checked
+against what was on screen and against the CSV's pair_index column). At
+Stop, writes the CSVs (domain.csv_export.export_session_csvs), a static
+end-of-run plot image (domain.plot_export.export_session_plot), and one
+final LED on/off debug snapshot for each stream - the same final
+snapshot can also be saved on demand mid-session via the "Save Debug
+Snapshot" button.
+
+The frame-drops plot was originally a single dual-axis chart sharing one
+plot with the pairing-gap line (via pyqtgraph's linked-ViewBox pattern
+for a second y-axis), but that rendering proved unreliable in practice
+(the second axis's curve visibly tracked the wrong scale on a real run,
+despite passing isolated unit tests) - replaced with a second, ordinary
+LivePlot instance instead, the same well-tested single-axis widget used
+above, trading the "one chart" look for reliability."""
 
 import glob
 import os
@@ -22,7 +30,6 @@ from PySide6.QtWidgets import (
 
 from gui.widgets.video_panel import VideoPanel
 from gui.widgets.live_plot import LivePlot
-from gui.widgets.dual_axis_live_plot import DualAxisLivePlot
 from gui.widgets.stats_panel import StatsPanel
 from engine.session_engine import SessionEngineThread
 from engine.test_session import TestSession, TestSessionConfig
@@ -39,6 +46,7 @@ class LiveSessionPage(QWidget):
         self._context = None
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
+        self._drop_since_last_plot = False
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
@@ -57,9 +65,7 @@ class LiveSessionPage(QWidget):
         toggle_row = QHBoxLayout()
         self.pairing_gap_checkbox = QCheckBox("Pairing gap (us)")
         self.pairing_gap_checkbox.setChecked(True)
-        self.pairing_gap_checkbox.toggled.connect(
-            lambda checked: self.live_plot.set_series_visible("pairing_gap_us", checked)
-        )
+        self.pairing_gap_checkbox.toggled.connect(self._set_pairing_gap_visible)
         self.position_gap_checkbox = QCheckBox("Position gap (ms)")
         self.position_gap_checkbox.setChecked(True)
         self.position_gap_checkbox.toggled.connect(
@@ -86,12 +92,11 @@ class LiveSessionPage(QWidget):
         layout.addLayout(bottom_row)
 
         drop_row = QHBoxLayout()
-        self.dual_plot = DualAxisLivePlot()
-        self.dual_plot.set_left_label("HW TS Delta (us)")
-        self.dual_plot.set_right_label("Frame Drops (count)")
-        self.dual_plot.add_left_series("pairing_gap_us", color="r")
-        self.dual_plot.add_right_series("frame_drops", color=(255, 140, 0))
-        drop_row.addWidget(self.dual_plot)
+        self.drop_plot = LivePlot()
+        self.drop_plot.setLabel("left", "Frame Drops (count)")
+        self.drop_plot.setLabel("bottom", "Pair Index")
+        self.drop_plot.add_series("frame_drops", color=(255, 140, 0))
+        drop_row.addWidget(self.drop_plot)
         layout.addLayout(drop_row)
 
         control_row = QHBoxLayout()
@@ -113,6 +118,9 @@ class LiveSessionPage(QWidget):
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
+
+    def _set_pairing_gap_visible(self, checked):
+        self.live_plot.set_series_visible("pairing_gap_us", checked)
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                     switch_time_ms, scan_direction, ir_threshold, rgb_threshold, ir_xy, rgb_xy, num_leds,
@@ -152,6 +160,7 @@ class LiveSessionPage(QWidget):
 
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
+        self._drop_since_last_plot = False
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
@@ -244,36 +253,58 @@ class LiveSessionPage(QWidget):
             os.remove(path)
 
     def _on_row_ready(self, row):
-        # Fired every frame-pair (not throttled) - the plots get every point
-        # so the graphs themselves aren't affected by the video-display stride.
-        pair_index = row["pair_index"]
-        if row.get("pairing_gap_us") is not None:
-            self.live_plot.add_point("pairing_gap_us", pair_index, row["pairing_gap_us"])
-            self.dual_plot.add_point("pairing_gap_us", pair_index, row["pairing_gap_us"])
-        if row.get("position_gap_ms") is not None:
-            self.live_plot.add_point("position_gap_ms", pair_index, row["position_gap_ms"])
-
+        # Fired on EVERY frame-pair (not throttled) - this must stay O(1)
+        # and cheap. It used to also call add_point() (pyqtgraph setData())
+        # here, up to 4 times per pair; even after bounding each series'
+        # history, that was still too expensive to sustain every single
+        # pair at up to 30fps, so a backlog of queued GUI-thread work built
+        # up continuously and only became visible once the user tried to
+        # interact (Stop, Save Debug Snapshot) and that click had to wait
+        # behind the entire backlog - looking exactly like a freeze. Plot
+        # updates now happen in _on_stats_ready instead, which only fires
+        # every display_stride pairs. Only cheap counter bookkeeping stays
+        # here, so the drop counts remain exact even though the plots don't
+        # sample every single pair.
         if row.get("ir_frame_drop"):
             self._ir_drop_count += 1
+            self._drop_since_last_plot = True
         if row.get("rgb_frame_drop"):
             self._rgb_drop_count += 1
-        # Per-pair delta (0/1), not a running total - one spike exactly where
-        # a drop happened, so it reads against the HW TS delta line on the
-        # same x-axis instead of an ever-climbing staircase.
-        dropped_this_pair = 1 if row.get("position_gap_ms_exclude_reason") == "frame_drop" else 0
-        self.dual_plot.add_point("frame_drops", pair_index, dropped_this_pair)
+            self._drop_since_last_plot = True
+        if row.get("position_gap_ms_exclude_reason") == "frame_drop":
+            self._drop_since_last_plot = True
 
     def _on_stats_ready(self, stats):
         # Fired only at the throttled display_stride cadence (same frames
-        # the video panels update on), so the shown frame index always
-        # matches what's visually on screen right now.
-        self.stats_panel.set_value("frame_index", stats["pair_index"])
+        # the video panels update on) - this is also where plot updates
+        # happen now (see _on_row_ready), keeping the expensive pyqtgraph
+        # setData() calls at a rate the GUI thread can actually sustain.
+        pair_index = stats["pair_index"]
+        self.stats_panel.set_value("frame_index", pair_index)
+
+        # Same NaN-for-excluded-values convention as
+        # optical_sync_poc_/pipeline_sync_test_diff.py's own plotting
+        # (`np.where(valid, gap_ms, nan)`) - an excluded pair can carry a
+        # wild real value (e.g. a multi-hundred-thousand-us pairing gap
+        # during auto-exposure warmup) that would otherwise force the whole
+        # y-axis to that scale.
         if stats.get("pairing_gap_us") is not None:
             self.stats_panel.set_value("pairing_gap_us", stats["pairing_gap_us"])
+            pairing_value = stats["pairing_gap_us"] if not stats.get("pairing_gap_us_excluded") else float("nan")
+            self.live_plot.add_point("pairing_gap_us", pair_index, pairing_value)
         if stats.get("position_gap_ms") is not None:
             self.stats_panel.set_value("position_gap_ms", stats["position_gap_ms"])
+            position_value = stats["position_gap_ms"] if not stats.get("position_gap_ms_excluded") else float("nan")
+            self.live_plot.add_point("position_gap_ms", pair_index, position_value)
+
         self.stats_panel.set_value("ir_frame_drops", self._ir_drop_count)
         self.stats_panel.set_value("rgb_frame_drops", self._rgb_drop_count)
+        # Whether ANY drop happened since the last plotted point, not just
+        # this exact pair's own value - otherwise an isolated drop on one of
+        # the ~9 skipped pairs between throttled samples would silently
+        # never show up as a spike.
+        self.drop_plot.add_point("frame_drops", pair_index, 1 if self._drop_since_last_plot else 0)
+        self._drop_since_last_plot = False
 
     def _on_session_finished(self, rows):
         export_session_csvs(rows, self._context["kept_csv_path"], self._context["dropped_csv_path"])

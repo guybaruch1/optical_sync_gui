@@ -29,3 +29,22 @@ def test_two_independent_series_do_not_interfere(qapp):
     plot.add_point("b", 0, 99.0)
     assert plot.get_series_data("a") == ([0], [1.0])
     assert plot.get_series_data("b") == ([0], [99.0])
+
+
+def test_add_point_bounds_history_to_max_points(qapp):
+    # A long-running session must not let each point's cost grow with the
+    # whole session's length - old points fall off instead of accumulating
+    # forever (see LivePlot's docstring for why this matters).
+    plot = LivePlot(max_points=3)
+    plot.add_series("pairing_gap_us", color="r")
+    for i in range(5):
+        plot.add_point("pairing_gap_us", i, float(i))
+
+    xs, ys = plot.get_series_data("pairing_gap_us")
+    assert xs == [2, 3, 4]
+    assert ys == [2.0, 3.0, 4.0]
+
+
+def test_addLegend_is_configured(qapp):
+    plot = LivePlot()
+    assert plot.getPlotItem().legend is not None

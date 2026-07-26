@@ -22,12 +22,12 @@ feed and graph.
   on/off/threshold values, with live progress logging and saved debug
   images (masked frame + detected LEDs circled) so you can see exactly what
   went wrong if detection fails.
-- **Live sync session** — dual IR/RGB video panels, a live scrolling plot of
-  two metrics (HW-timestamp pairing gap, and LED-position gap while the
-  panel is scanning), a second live dual-axis graph correlating HW
-  timestamp gap against a running frame-drop count, a live stats sidebar
-  (frame index, HW timestamp gap, position gap, LED switch time, IR/RGB
-  frame-drop counts), Start/Stop with an optional fixed duration, a
+- **Live sync session** — dual IR/RGB video panels (each showing a live
+  LED on/off detection overlay), a live scrolling plot of two metrics
+  (HW-timestamp pairing gap, and LED-position gap while the panel is
+  scanning), a second live plot of per-pair frame drops, a live stats
+  sidebar (frame index, HW timestamp gap, position gap, LED switch time,
+  IR/RGB frame-drop counts), Start/Stop with an optional fixed duration, a
   "Save Debug Snapshot" button for an on-demand LED on/off correctness
   check, and CSVs plus a summary plot image written at the end.
 
@@ -94,9 +94,9 @@ The window opens maximized. Walk through the wizard:
    `output/debug_rgb_detection.png` — these show the exact masked region
    and whatever was detected, even when zero LEDs were found.
 5. **Live Session** — set an optional duration (0 = manual stop), click
-   **Start**, watch both video feeds, the live plot (toggle either metric
-   series on/off), and the second dual-axis graph (HW timestamp gap vs.
-   running frame-drop count). Click **Save Debug Snapshot** any time to
+   **Start**, watch both video feeds (each with a live LED on/off overlay),
+   the live plot (toggle either metric series on/off), and the second plot
+   of per-pair frame drops. Click **Save Debug Snapshot** any time to
    check the LED on/off classification against the live video. Click
    **Stop** (or let the duration elapse) to write the CSVs, a summary plot
    image, and a final debug snapshot under `output/`.
