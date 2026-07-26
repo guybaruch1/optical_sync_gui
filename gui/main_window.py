@@ -140,6 +140,8 @@ class MainWindow(QMainWindow):
             kept_csv_path=os.path.join(output_dir, self.settings["paths"]["raw_csv_path"]),
             dropped_csv_path=os.path.join(output_dir, self.settings["paths"]["frame_drop_csv_path"]),
             output_dir=output_dir,
+            snapshot_every_n_pairs=self.settings["test"]["snapshot_every_n_pairs"],
+            max_snapshots=self.settings["test"]["max_snapshots"],
         )
         self.stack.setCurrentWidget(self.live_session_page)
 

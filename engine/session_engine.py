@@ -18,7 +18,17 @@ from domain.realsense_utils import sample_all_neighborhood_brightness
 
 
 class SessionEngineThread(QThread):
-    frame_ready = Signal(str, object)
+    # 4th payload item is (ir_on_mask, rgb_on_mask) - a snapshot copy taken
+    # synchronously on this thread at the same pair_index as the image, or
+    # None if position_gap_metric wasn't provided. Bundling it into the
+    # signal (rather than having the GUI thread read
+    # position_gap_metric.last_ir_on_mask/last_rgb_on_mask later) is
+    # deliberate: those attributes are overwritten every pair by this
+    # background thread, which keeps running unblocked while a queued
+    # cross-thread signal waits to be processed on the GUI thread - by the
+    # time a slot actually ran, a live read was already many pairs stale,
+    # showing the on/off overlay offset from the frame it was drawn on.
+    frame_ready = Signal(str, object, int, object)
     row_ready = Signal(dict)
     stats_ready = Signal(dict)
     session_finished = Signal(list)
@@ -27,7 +37,7 @@ class SessionEngineThread(QThread):
     def __init__(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                  test_session, ir_xy=None, rgb_xy=None, neighborhood_size=5,
                  scan_direction=None, switch_time_ms=None,
-                 display_stride=10, parent=None):
+                 display_stride=10, position_gap_metric=None, parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self.device_serial = device_serial
@@ -42,6 +52,7 @@ class SessionEngineThread(QThread):
         self.scan_direction = scan_direction
         self.switch_time_ms = switch_time_ms
         self.display_stride = display_stride
+        self.position_gap_metric = position_gap_metric
         self._stop_requested = False
         self._capture = None
         self._start_time = None
@@ -96,8 +107,22 @@ class SessionEngineThread(QThread):
             self._start_time = time.time()
 
             def on_frames(ir_image, rgb_image, pair_index):
-                self.frame_ready.emit("ir", ir_image)
-                self.frame_ready.emit("rgb", rgb_image)
+                # Read+copy here, synchronously, still within the same
+                # acquisition-loop iteration that just processed this exact
+                # pair_index (process_pair() runs immediately before
+                # on_frames() in AcquisitionLoop.run_until_stopped) - the
+                # copy is what makes it safe to read on the GUI thread
+                # later, since last_ir_on_mask/last_rgb_on_mask will keep
+                # changing underneath it on this thread in the meantime.
+                if self.position_gap_metric is not None:
+                    ir_mask = self.position_gap_metric.last_ir_on_mask
+                    rgb_mask = self.position_gap_metric.last_rgb_on_mask
+                    ir_mask = ir_mask.copy() if ir_mask is not None else None
+                    rgb_mask = rgb_mask.copy() if rgb_mask is not None else None
+                else:
+                    ir_mask = rgb_mask = None
+                self.frame_ready.emit("ir", ir_image, pair_index, ir_mask)
+                self.frame_ready.emit("rgb", rgb_image, pair_index, rgb_mask)
 
             def on_row(row):
                 self.row_ready.emit(row)

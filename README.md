@@ -131,13 +131,23 @@ Everything lands under `output/` (created automatically):
 - `pipeline_sync_frame_drops.csv` — same schema, only the frame-drop-excluded
   rows.
 - `pipeline_sync_plot.png` — a static end-of-session plot (pairing gap,
-  position gap, and cumulative frame-drop count, all vs. pair index),
+  position gap, and a per-pair frame-drop spike, all vs. pair index),
   rendered from the same rows as the CSVs.
 - `live_led_state_ir.png`, `live_led_state_rgb.png` — LED on/off debug
   snapshot from the most recent live-session frame: each calibrated LED
   position circled green if currently classified "on", red if "off" - lets
   you visually confirm the threshold classification is actually correct.
-  Written automatically at Stop, or any time via **Save Debug Snapshot**.
+  Written automatically at Stop, or any time via **Save Debug Snapshot**
+  (this same overlay is also shown live on the IR/RGB video panels during
+  the session, not just in the saved files).
+- `periodic_led_state_ir_pair00020.png`, `periodic_led_state_rgb_pair00020.png`,
+  etc. — the same on/off debug overlay, saved automatically every
+  `test.snapshot_every_n_pairs` pairs during a live session (up to
+  `test.max_snapshots` per stream), for spot-checking detection quality
+  over the course of a run rather than just at the end. The pair index in
+  the filename matches the CSV's `pair_index` column and what was on
+  screen at that exact moment. Cleared at the start of each new session so
+  files from a previous run don't linger.
 
 ## Troubleshooting
 

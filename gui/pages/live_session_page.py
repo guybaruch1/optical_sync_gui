@@ -1,12 +1,18 @@
-"""Wizard step 5 - the live sync-test view: dual video panels, a
-togglable/stacked live plot of both metrics, a dual-axis HW-timestamp-gap
-vs. frame-drop-count graph, a live stats sidebar, and Start/Stop with an
-optional fixed duration. At Stop, writes the CSVs
+"""Wizard step 5 - the live sync-test view: dual video panels (each
+showing a live LED on/off detection overlay), a togglable/stacked live
+plot of both metrics, a dual-axis HW-timestamp-gap vs. frame-drop-count
+graph, a live stats sidebar, and Start/Stop with an optional fixed
+duration. Saves periodic LED on/off debug snapshots during the run
+(every settings.yaml test.snapshot_every_n_pairs pairs, capped at
+test.max_snapshots per stream, filename includes the pair_index so it
+can be cross-checked against what was on screen and against the CSV's
+pair_index column). At Stop, writes the CSVs
 (domain.csv_export.export_session_csvs), a static end-of-run plot image
-(domain.plot_export.export_session_plot), and an LED on/off debug
-snapshot for each stream (domain.realsense_utils.draw_led_state_overlay) -
-the same snapshot can also be saved on demand mid-session."""
+(domain.plot_export.export_session_plot), and one final LED on/off debug
+snapshot for each stream - the same final snapshot can also be saved on
+demand mid-session via the "Save Debug Snapshot" button."""
 
+import glob
 import os
 
 import cv2
@@ -31,13 +37,13 @@ class LiveSessionPage(QWidget):
         super().__init__(parent)
         self.engine_thread = None
         self._context = None
-        self._position_gap_metric = None
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
         self._last_rgb_on_mask = None
+        self._periodic_snapshot_count = 0
 
         layout = QVBoxLayout(self)
 
@@ -112,7 +118,8 @@ class LiveSessionPage(QWidget):
                     switch_time_ms, scan_direction, ir_threshold, rgb_threshold, ir_xy, rgb_xy, num_leds,
                     neighborhood_size,
                     frame_drop_threshold_factor, warmup_pairs_to_skip, pairing_gap_outlier_threshold_us,
-                    kept_csv_path, dropped_csv_path, output_dir):
+                    kept_csv_path, dropped_csv_path, output_dir,
+                    snapshot_every_n_pairs, max_snapshots):
         self._context = dict(
             ctx=ctx, device_serial=device_serial, ir_resolution=ir_resolution, ir_fps=ir_fps,
             color_resolution=color_resolution, color_fps=color_fps, switch_time_ms=switch_time_ms,
@@ -123,6 +130,7 @@ class LiveSessionPage(QWidget):
             warmup_pairs_to_skip=warmup_pairs_to_skip,
             pairing_gap_outlier_threshold_us=pairing_gap_outlier_threshold_us,
             kept_csv_path=kept_csv_path, dropped_csv_path=dropped_csv_path, output_dir=output_dir,
+            snapshot_every_n_pairs=snapshot_every_n_pairs, max_snapshots=max_snapshots,
         )
         self.stats_panel.set_value("switch_time_ms", switch_time_ms)
 
@@ -142,19 +150,21 @@ class LiveSessionPage(QWidget):
         test_session = TestSession(TestSessionConfig(metrics=metrics, duration_s=duration_s))
         test_session.start()
 
-        self._position_gap_metric = position_gap_metric
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
         self._last_rgb_on_mask = None
+        self._periodic_snapshot_count = 0
+        self._clear_periodic_snapshots(ctx["output_dir"])
 
         self.engine_thread = SessionEngineThread(
             ctx["ctx"], ctx["device_serial"], ctx["ir_resolution"], ctx["ir_fps"],
             ctx["color_resolution"], ctx["color_fps"], test_session,
             ir_xy=ctx["ir_xy"], rgb_xy=ctx["rgb_xy"], neighborhood_size=ctx["neighborhood_size"],
             scan_direction=ctx["scan_direction"], switch_time_ms=ctx["switch_time_ms"],
+            position_gap_metric=position_gap_metric,
         )
         self.engine_thread.frame_ready.connect(self._on_frame_ready)
         self.engine_thread.row_ready.connect(self._on_row_ready)
@@ -171,13 +181,67 @@ class LiveSessionPage(QWidget):
         if self.engine_thread is not None:
             self.engine_thread.request_stop()
 
-    def _on_frame_ready(self, stream_name, image):
+    def _on_frame_ready(self, stream_name, image, pair_index, on_mask):
+        # image and on_mask arrive together, already paired correctly by
+        # SessionEngineThread (a snapshot copy taken on the background
+        # thread at this exact pair_index) - this method must not read any
+        # live/mutable state to recover the mask itself, only use what was
+        # handed to it, or the same stale-read bug comes right back.
         if stream_name == "ir":
-            self.ir_panel.set_frame(image)
             self._last_ir_image = image
+            self._last_ir_on_mask = on_mask
         else:
-            self.rgb_panel.set_frame(image)
             self._last_rgb_image = image
+            self._last_rgb_on_mask = on_mask
+
+        display_image = draw_led_state_overlay(image, self._overlay_xy(stream_name), on_mask) \
+            if on_mask is not None and self._context is not None else image
+        if stream_name == "ir":
+            self.ir_panel.set_frame(display_image)
+        else:
+            self.rgb_panel.set_frame(display_image)
+            # "rgb" is always the second of the pair emitted per iteration
+            # (see SessionEngineThread.on_frames), so by this point
+            # _last_ir_image/_last_ir_on_mask have already been updated too.
+            self._maybe_save_periodic_snapshot(pair_index)
+
+    def _overlay_xy(self, stream_name):
+        return self._context["ir_xy"] if stream_name == "ir" else self._context["rgb_xy"]
+
+    def _maybe_save_periodic_snapshot(self, pair_index):
+        if self._context is None:
+            return
+        every_n = self._context["snapshot_every_n_pairs"]
+        max_snapshots = self._context["max_snapshots"]
+        if every_n <= 0 or pair_index % every_n != 0:
+            return
+        if self._periodic_snapshot_count >= max_snapshots:
+            return
+        if self._last_ir_on_mask is None or self._last_rgb_on_mask is None:
+            return
+        if self._last_ir_image is None or self._last_rgb_image is None:
+            return
+
+        output_dir = self._context["output_dir"]
+        # pair_index in the filename lets you directly verify the saved
+        # detection picture matches the frame that was on screen at that
+        # exact moment - the same number the live display and the CSV's
+        # pair_index column both use.
+        ir_path = os.path.join(output_dir, "periodic_led_state_ir_pair{:05d}.png".format(pair_index))
+        rgb_path = os.path.join(output_dir, "periodic_led_state_rgb_pair{:05d}.png".format(pair_index))
+        ir_debug = draw_led_state_overlay(self._last_ir_image, self._context["ir_xy"], self._last_ir_on_mask)
+        rgb_debug = draw_led_state_overlay(self._last_rgb_image, self._context["rgb_xy"], self._last_rgb_on_mask)
+        cv2.imwrite(ir_path, ir_debug)
+        cv2.imwrite(rgb_path, rgb_debug)
+        self._periodic_snapshot_count += 1
+
+    def _clear_periodic_snapshots(self, output_dir):
+        # Stale files from a previous run (e.g. one that ran longer and
+        # reached higher pair_index values) would otherwise linger alongside
+        # this run's snapshots and make "same frame index" cross-checking
+        # ambiguous about which run a given file belongs to.
+        for path in glob.glob(os.path.join(output_dir, "periodic_led_state_*.png")):
+            os.remove(path)
 
     def _on_row_ready(self, row):
         # Fired every frame-pair (not throttled) - the plots get every point
@@ -202,12 +266,7 @@ class LiveSessionPage(QWidget):
     def _on_stats_ready(self, stats):
         # Fired only at the throttled display_stride cadence (same frames
         # the video panels update on), so the shown frame index always
-        # matches what's visually on screen right now. Captures the
-        # matching LED on/off masks here too - process_pair() (and thus
-        # PositionGapMetric.last_ir_on_mask/last_rgb_on_mask) already ran for
-        # this exact pair_index earlier in the same acquisition-loop
-        # iteration that produced the frame just stored by _on_frame_ready,
-        # so the two stay in sync despite updating via separate signals.
+        # matches what's visually on screen right now.
         self.stats_panel.set_value("frame_index", stats["pair_index"])
         if stats.get("pairing_gap_us") is not None:
             self.stats_panel.set_value("pairing_gap_us", stats["pairing_gap_us"])
@@ -215,10 +274,6 @@ class LiveSessionPage(QWidget):
             self.stats_panel.set_value("position_gap_ms", stats["position_gap_ms"])
         self.stats_panel.set_value("ir_frame_drops", self._ir_drop_count)
         self.stats_panel.set_value("rgb_frame_drops", self._rgb_drop_count)
-
-        if self._position_gap_metric is not None:
-            self._last_ir_on_mask = self._position_gap_metric.last_ir_on_mask
-            self._last_rgb_on_mask = self._position_gap_metric.last_rgb_on_mask
 
     def _on_session_finished(self, rows):
         export_session_csvs(rows, self._context["kept_csv_path"], self._context["dropped_csv_path"])
@@ -229,16 +284,41 @@ class LiveSessionPage(QWidget):
 
     def _save_led_state_debug_images(self):
         # Also wired to the "Save Debug Snapshot" button for an on-demand
-        # check mid-session, not just the automatic one at Stop.
-        if self._context is None or self._last_ir_on_mask is None or self._last_rgb_on_mask is None:
+        # check mid-session, not just the automatic one at Stop. Uses the
+        # cached masks populated by _on_frame_ready from the signal payload
+        # (already correctly paired to _last_ir_image/_last_rgb_image at
+        # the moment they arrived) - never reads a live metric object,
+        # which was the source of the frame/detection offset bug. Always
+        # reports what happened via status_label - previously this
+        # returned silently on every path (not-ready, success, and failure
+        # all looked identical), which is why the button appeared "not
+        # working" even when it may have been succeeding.
+        if self._context is None:
+            self.status_label.setText("No active session - click Start first.")
+            return
+        if self._last_ir_on_mask is None or self._last_rgb_on_mask is None:
+            self.status_label.setText("No frame data yet - wait a moment after Start and try again.")
             return
         if self._last_ir_image is None or self._last_rgb_image is None:
+            self.status_label.setText("No frame data yet - wait a moment after Start and try again.")
             return
+
         output_dir = self._context["output_dir"]
-        ir_debug = draw_led_state_overlay(self._last_ir_image, self._context["ir_xy"], self._last_ir_on_mask)
-        cv2.imwrite(os.path.join(output_dir, "live_led_state_ir.png"), ir_debug)
-        rgb_debug = draw_led_state_overlay(self._last_rgb_image, self._context["rgb_xy"], self._last_rgb_on_mask)
-        cv2.imwrite(os.path.join(output_dir, "live_led_state_rgb.png"), rgb_debug)
+        ir_path = os.path.join(output_dir, "live_led_state_ir.png")
+        rgb_path = os.path.join(output_dir, "live_led_state_rgb.png")
+        try:
+            ir_debug = draw_led_state_overlay(self._last_ir_image, self._context["ir_xy"], self._last_ir_on_mask)
+            rgb_debug = draw_led_state_overlay(self._last_rgb_image, self._context["rgb_xy"], self._last_rgb_on_mask)
+            ir_ok = cv2.imwrite(ir_path, ir_debug)
+            rgb_ok = cv2.imwrite(rgb_path, rgb_debug)
+        except Exception as exc:
+            self.status_label.setText("Failed to save debug snapshot: {}".format(exc))
+            return
+
+        if ir_ok and rgb_ok:
+            self.status_label.setText("Saved debug snapshot: {}, {}".format(ir_path, rgb_path))
+        else:
+            self.status_label.setText("Failed to write one or both debug snapshot files to {}".format(output_dir))
 
     def _on_error(self, message):
         # Surfaces a hardware failure (e.g. camera unplugged mid-session) to

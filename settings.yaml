@@ -97,7 +97,7 @@ test:
   # Snapshot filenames use the same pair_index as the CSV's pair_index column,
   # so you can cross-check the algorithm's on/off calls against the real image.
   snapshot_every_n_pairs: 20
-  max_snapshots: 6
+  max_snapshots: 15
   # Per-stream frame-drop detection: a stream's consecutive HW frame_timestamp
   # delta must exceed (1_000_000/fps) * frame_drop_threshold_factor (or be
   # negative) to be flagged as a probable dropped frame - same style of check
