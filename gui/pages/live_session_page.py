@@ -165,6 +165,14 @@ class LiveSessionPage(QWidget):
         test_session = TestSession(TestSessionConfig(metrics=metrics, duration_s=duration_s))
         test_session.start()
 
+        # A new session's pair_index restarts at 0 - without clearing, its
+        # points would draw right on top of/alongside whatever the previous
+        # session left on these graphs, and any manual zoom/pan from the
+        # previous session would carry over too (clear() also resets to
+        # auto-range).
+        self.live_plot.clear_data()
+        self.drop_plot.clear_data()
+
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
         self._drop_since_last_plot = False

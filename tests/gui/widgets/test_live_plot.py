@@ -48,3 +48,31 @@ def test_add_point_bounds_history_to_max_points(qapp):
 def test_addLegend_is_configured(qapp):
     plot = LivePlot()
     assert plot.getPlotItem().legend is not None
+
+
+def test_clear_empties_all_series(qapp):
+    plot = LivePlot()
+    plot.add_series("a", color="r")
+    plot.add_series("b", color="b")
+    plot.add_point("a", 0, 1.0)
+    plot.add_point("b", 0, 99.0)
+
+    plot.clear_data()
+
+    assert plot.get_series_data("a") == ([], [])
+    assert plot.get_series_data("b") == ([], [])
+
+
+def test_add_point_after_clear_starts_fresh_not_appended_to_old_data(qapp):
+    # A new session's pair_index restarts at 0 - without clear(), its points
+    # would land alongside/on top of whatever the previous session left in
+    # the deque instead of replacing it.
+    plot = LivePlot()
+    plot.add_series("a", color="r")
+    plot.add_point("a", 0, 1.0)
+    plot.add_point("a", 1, 2.0)
+
+    plot.clear_data()
+    plot.add_point("a", 0, 5.0)
+
+    assert plot.get_series_data("a") == ([0], [5.0])

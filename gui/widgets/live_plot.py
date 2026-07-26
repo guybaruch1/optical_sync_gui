@@ -39,6 +39,18 @@ class LivePlot(pg.PlotWidget):
         self._y_data[name].append(y)
         self._curves[name].setData(list(self._x_data[name]), list(self._y_data[name]))
 
+    def clear_data(self):
+        # Wipes every series back to empty and resets to auto-range, so a
+        # new session starts on a genuinely blank graph - without this, a
+        # new session's pair_index restarting at 0 would draw right on top
+        # of/alongside whatever the previous session left behind, and any
+        # manual zoom/pan from the previous session would carry over too.
+        for name in self._curves:
+            self._x_data[name].clear()
+            self._y_data[name].clear()
+            self._curves[name].setData([], [])
+        self.enableAutoRange()
+
     def set_series_visible(self, name, visible):
         self._curves[name].setVisible(visible)
 
