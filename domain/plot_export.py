@@ -19,12 +19,13 @@ def export_session_plot(rows, path):
     pairing_gap = [_to_plot_value(row.get("pairing_gap_us")) for row in rows]
     position_gap = [_to_plot_value(row.get("position_gap_ms")) for row in rows]
 
-    drop_counts = []
-    count = 0
-    for row in rows:
-        if row.get("position_gap_ms_exclude_reason") == "frame_drop":
-            count += 1
-        drop_counts.append(count)
+    # Per-pair delta (0/1), not a running total - one spike exactly where a
+    # drop happened, so it reads against the gap lines above on the same
+    # x-axis instead of an ever-climbing staircase.
+    dropped_this_pair = [
+        1 if row.get("position_gap_ms_exclude_reason") == "frame_drop" else 0
+        for row in rows
+    ]
 
     fig, (gap_ax, drop_ax) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
@@ -34,9 +35,9 @@ def export_session_plot(rows, path):
     gap_ax.legend()
     gap_ax.grid(True, alpha=0.3)
 
-    drop_ax.plot(pair_indices, drop_counts, label="Cumulative frame drops", color="tab:orange")
+    drop_ax.plot(pair_indices, dropped_this_pair, label="Frame drop (this pair)", color="tab:orange")
     drop_ax.set_xlabel("Pair index")
-    drop_ax.set_ylabel("Frame drops")
+    drop_ax.set_ylabel("Frame drop")
     drop_ax.legend()
     drop_ax.grid(True, alpha=0.3)
 

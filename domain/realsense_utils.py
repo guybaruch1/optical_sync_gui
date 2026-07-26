@@ -20,6 +20,21 @@ def sample_neighborhood_brightness(image, x, y, size=5):
     return float(patch.mean())
 
 
+def sample_all_neighborhood_brightness(image, xy_positions, size=5):
+    """Like sample_neighborhood_brightness, but for many LED positions on
+    the same frame - converts BGR to grayscale once up front instead of
+    once per LED. Calling sample_neighborhood_brightness directly in a
+    per-LED loop re-converts the same full-resolution frame on every call;
+    at num_leds=100 that was slow enough for the live-session acquisition
+    loop to fall behind the camera's real fps and self-induce frame drops
+    (confirmed from a real run's HW timestamps: consecutive intervals were
+    exact 2x/3x multiples of the camera's true frame interval, never a
+    fuzzy in-between value - the signature of the loop being too slow to
+    call wait_for_frames() again in time, not a hardware/config issue)."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    return np.array([sample_neighborhood_brightness(gray, x, y, size) for (x, y) in xy_positions])
+
+
 def apply_roi_mask(image, roi):
     x, y, w, h = roi
     mask = np.zeros_like(image)

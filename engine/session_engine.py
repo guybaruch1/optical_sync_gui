@@ -14,15 +14,7 @@ from PySide6.QtCore import QThread, Signal
 from engine.acquisition_loop import AcquisitionLoop, AcquisitionCallbacks
 from engine.streams import ContinuousCapture, disable_ir_emitter, enable_auto_exposure, get_sensors_for_device
 from engine.led_panel import LEDPanel
-from domain.realsense_utils import sample_neighborhood_brightness
-
-
-def _sample_all_positions(image, xy_array, neighborhood_size):
-    import numpy as np
-    return np.array([
-        sample_neighborhood_brightness(image, x, y, neighborhood_size)
-        for (x, y) in xy_array
-    ])
+from domain.realsense_utils import sample_all_neighborhood_brightness
 
 
 class SessionEngineThread(QThread):
@@ -67,11 +59,11 @@ class SessionEngineThread(QThread):
         4-tuple directly for exactly that reason)."""
         for ir_image, rgb_image, ir_ts_us, rgb_ts_us in self._capture.frames():
             ir_bright = (
-                _sample_all_positions(ir_image, self.ir_xy, self.neighborhood_size)
+                sample_all_neighborhood_brightness(ir_image, self.ir_xy, self.neighborhood_size)
                 if self.ir_xy is not None else None
             )
             rgb_bright = (
-                _sample_all_positions(rgb_image, self.rgb_xy, self.neighborhood_size)
+                sample_all_neighborhood_brightness(rgb_image, self.rgb_xy, self.neighborhood_size)
                 if self.rgb_xy is not None else None
             )
             yield ir_image, rgb_image, ir_ts_us, rgb_ts_us, ir_bright, rgb_bright

@@ -34,7 +34,6 @@ class LiveSessionPage(QWidget):
         self._position_gap_metric = None
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
-        self._combined_drop_count = 0
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
@@ -146,7 +145,6 @@ class LiveSessionPage(QWidget):
         self._position_gap_metric = position_gap_metric
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
-        self._combined_drop_count = 0
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
@@ -195,9 +193,11 @@ class LiveSessionPage(QWidget):
             self._ir_drop_count += 1
         if row.get("rgb_frame_drop"):
             self._rgb_drop_count += 1
-        if row.get("position_gap_ms_exclude_reason") == "frame_drop":
-            self._combined_drop_count += 1
-        self.dual_plot.add_point("frame_drops", pair_index, self._combined_drop_count)
+        # Per-pair delta (0/1), not a running total - one spike exactly where
+        # a drop happened, so it reads against the HW TS delta line on the
+        # same x-axis instead of an ever-climbing staircase.
+        dropped_this_pair = 1 if row.get("position_gap_ms_exclude_reason") == "frame_drop" else 0
+        self.dual_plot.add_point("frame_drops", pair_index, dropped_this_pair)
 
     def _on_stats_ready(self, stats):
         # Fired only at the throttled display_stride cadence (same frames

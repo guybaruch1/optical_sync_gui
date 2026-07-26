@@ -1,6 +1,7 @@
 import numpy as np
 from domain.realsense_utils import (
     sample_neighborhood_brightness,
+    sample_all_neighborhood_brightness,
     apply_roi_mask,
     merge_close_centroids,
     detect_led_centroids,
@@ -24,6 +25,25 @@ def test_sample_neighborhood_brightness_clamps_at_edge():
     # Should not raise even though the window would run off the top-left edge.
     value = sample_neighborhood_brightness(image, x=0, y=0, size=5)
     assert value == 100.0
+
+
+def test_sample_all_neighborhood_brightness_samples_each_position():
+    image = np.zeros((20, 20, 3), dtype=np.uint8)
+    image[8:13, 8:13] = 200  # BGR patch around (10, 10)
+    xy_positions = [(10, 10), (2, 2)]
+
+    result = sample_all_neighborhood_brightness(image, xy_positions, size=5)
+
+    assert result.tolist() == [200.0, 0.0]
+
+
+def test_sample_all_neighborhood_brightness_grayscale_input_not_reconverted():
+    image = np.zeros((20, 20), dtype=np.uint8)
+    image[8:13, 8:13] = 150
+
+    result = sample_all_neighborhood_brightness(image, [(10, 10)], size=5)
+
+    assert result.tolist() == [150.0]
 
 
 def test_apply_roi_mask_zeroes_outside_box():
