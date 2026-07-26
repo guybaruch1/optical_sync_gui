@@ -74,9 +74,15 @@ class StreamConfigPage(QWidget):
         self._preselect(self.rgb_combo, preferred_rgb)
 
     def _preselect(self, combo, preferred):
+        """Uses findText() rather than findData(): PySide6's findData() is
+        unreliable for tuple userData (returns -1 even for an exact match
+        once the combo has more than a couple of entries), which silently
+        defeated settings.yaml's preferred resolution/fps and left the combo
+        on whatever sorted first."""
         if preferred is None:
             return
-        index = combo.findData(tuple(preferred))
+        width, height, fps = preferred
+        index = combo.findText("{}x{}@{}fps".format(width, height, fps))
         if index != -1:
             combo.setCurrentIndex(index)
 
