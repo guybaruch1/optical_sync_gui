@@ -31,6 +31,7 @@ class MetricResult:
     value: "float | None"
     excluded: bool
     exclude_reason: "str | None" = None
+    extra: "dict | None" = None
 
 
 class Metric(ABC):
@@ -142,6 +143,14 @@ class PositionGapMetric(Metric):
         self._prev_ir_ts = None
         self._prev_rgb_ts = None
         self._pair_count = 0
+        # Per-LED on/off classification from the most recent update() call that
+        # actually had brightness data - a side channel read directly by
+        # gui/pages/live_session_page.py to build LED on/off debug snapshots.
+        # Deliberately NOT part of MetricResult.extra: that dict gets folded
+        # into the CSV row, and these are full per-LED boolean arrays, not
+        # CSV-sized scalars.
+        self.last_ir_on_mask = None
+        self.last_rgb_on_mask = None
 
     def update(self, sample: FramePairSample) -> MetricResult:
         ir_drop = _is_frame_drop(self._prev_ir_ts, sample.ir_ts_us, self.ir_fps, self.frame_drop_threshold_factor)
@@ -150,23 +159,26 @@ class PositionGapMetric(Metric):
         self._prev_rgb_ts = sample.rgb_ts_us
         self._pair_count += 1
         is_warmup = self._pair_count <= self.warmup_pairs_to_skip
+        drop_extra = {"ir_frame_drop": ir_drop, "rgb_frame_drop": rgb_drop}
 
         if sample.ir_bright is None or sample.rgb_bright is None:
-            return MetricResult(name=self.name, value=None, excluded=True, exclude_reason="no_led_data")
+            return MetricResult(name=self.name, value=None, excluded=True, exclude_reason="no_led_data", extra=drop_extra)
 
         ir_on = sample.ir_bright > self.ir_threshold
         rgb_on = sample.rgb_bright > self.rgb_threshold
+        self.last_ir_on_mask = ir_on
+        self.last_rgb_on_mask = rgb_on
         ir_last, _ = find_last_on_led(ir_on)
         rgb_last, _ = find_last_on_led(rgb_on)
 
         if ir_last is None or rgb_last is None:
-            return MetricResult(name=self.name, value=None, excluded=True, exclude_reason="miss")
+            return MetricResult(name=self.name, value=None, excluded=True, exclude_reason="miss", extra=drop_extra)
 
         diff = compute_position_gap(ir_last, rgb_last, self.num_leds)
         gap_ms = diff * self.switch_time_ms
 
         if ir_drop or rgb_drop:
-            return MetricResult(name=self.name, value=gap_ms, excluded=True, exclude_reason="frame_drop")
+            return MetricResult(name=self.name, value=gap_ms, excluded=True, exclude_reason="frame_drop", extra=drop_extra)
         if is_warmup:
-            return MetricResult(name=self.name, value=gap_ms, excluded=True, exclude_reason="warmup")
-        return MetricResult(name=self.name, value=gap_ms, excluded=False, exclude_reason=None)
+            return MetricResult(name=self.name, value=gap_ms, excluded=True, exclude_reason="warmup", extra=drop_extra)
+        return MetricResult(name=self.name, value=gap_ms, excluded=False, exclude_reason=None, extra=drop_extra)

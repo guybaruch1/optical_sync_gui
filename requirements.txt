@@ -4,4 +4,5 @@ numpy
 PyYAML
 PySide6
 pyqtgraph
+matplotlib
 pytest

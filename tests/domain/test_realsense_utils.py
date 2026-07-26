@@ -8,6 +8,7 @@ from domain.realsense_utils import (
     yuyv_to_bgr,
     save_debug_detection_image,
     draw_bundle_overlay,
+    draw_led_state_overlay,
 )
 
 
@@ -100,6 +101,28 @@ def test_draw_bundle_overlay_converts_grayscale_and_draws_text():
     assert result.shape == (100, 300, 3)  # grayscale input converted to BGR for drawing
     assert result is not image  # never mutates the caller's array
     assert (result > 0).any()  # some text pixels were actually drawn
+
+
+def test_draw_led_state_overlay_marks_on_led_green_and_off_led_red():
+    image = np.zeros((50, 50), dtype=np.uint8)
+    xy_positions = [(10, 10), (40, 40)]
+    on_mask = [True, False]
+
+    result = draw_led_state_overlay(image, xy_positions, on_mask)
+
+    assert result.shape == (50, 50, 3)  # grayscale input converted to BGR for drawing
+    assert result is not image  # never mutates the caller's array
+    assert result[10, 10 + 8].tolist() == [0, 255, 0]  # on -> green ring
+    assert result[40, 40 + 8].tolist() == [0, 0, 255]  # off -> red ring
+
+
+def test_draw_led_state_overlay_does_not_mutate_bgr_input():
+    image = np.zeros((50, 50, 3), dtype=np.uint8)
+
+    result = draw_led_state_overlay(image, [(25, 25)], [True])
+
+    assert (image == 0).all()  # original untouched
+    assert (result > 0).any()  # the copy has the drawn circle
 
 
 def test_draw_bundle_overlay_does_not_mutate_bgr_input():

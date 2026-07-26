@@ -87,6 +87,20 @@ def save_debug_detection_image(image, centroids, path):
     cv2.imwrite(path, debug_img)
 
 
+def draw_led_state_overlay(image, xy_positions, on_mask):
+    """Debug snapshot for the live session: circles each calibrated LED
+    position green if the live threshold classification says it's on right
+    now, red if off - lets you visually confirm PositionGapMetric's on/off
+    call is actually correct for a given frame, the same way
+    save_debug_detection_image lets calibration's blob detection be
+    sanity-checked."""
+    debug_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if len(image.shape) == 2 else image.copy()
+    for (x, y), is_on in zip(xy_positions, on_mask):
+        color = (0, 255, 0) if is_on else (0, 0, 255)  # BGR: green=on, red=off
+        cv2.circle(debug_img, (int(x), int(y)), 8, color, 2)
+    return debug_img
+
+
 def draw_bundle_overlay(image, bundle_index, ir_frame_number, color_frame_number, ir_ts_us, color_ts_us, delta_us):
     """Burns a live pairing-quality diagnostic overlay (bundle counter,
     each stream's own HW frame number, HW timestamps, and their delta) onto

@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
             pairing_gap_outlier_threshold_us=self.settings["test"]["pairing_gap_outlier_threshold_us"],
             kept_csv_path=os.path.join(output_dir, self.settings["paths"]["raw_csv_path"]),
             dropped_csv_path=os.path.join(output_dir, self.settings["paths"]["frame_drop_csv_path"]),
+            output_dir=output_dir,
         )
         self.stack.setCurrentWidget(self.live_session_page)
 

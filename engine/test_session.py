@@ -41,6 +41,8 @@ class TestSession:
             row[result.name] = result.value
             row[f"{result.name}_excluded"] = result.excluded
             row[f"{result.name}_exclude_reason"] = result.exclude_reason
+            if result.extra:
+                row.update(result.extra)
         self._rows.append(row)
         return row
 

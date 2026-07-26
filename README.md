@@ -24,8 +24,12 @@ feed and graph.
   went wrong if detection fails.
 - **Live sync session** — dual IR/RGB video panels, a live scrolling plot of
   two metrics (HW-timestamp pairing gap, and LED-position gap while the
-  panel is scanning), a live stats sidebar, Start/Stop with an optional
-  fixed duration, and a CSV written at the end.
+  panel is scanning), a second live dual-axis graph correlating HW
+  timestamp gap against a running frame-drop count, a live stats sidebar
+  (frame index, HW timestamp gap, position gap, LED switch time, IR/RGB
+  frame-drop counts), Start/Stop with an optional fixed duration, a
+  "Save Debug Snapshot" button for an on-demand LED on/off correctness
+  check, and CSVs plus a summary plot image written at the end.
 
 ## Prerequisites
 
@@ -90,9 +94,12 @@ The window opens maximized. Walk through the wizard:
    `output/debug_rgb_detection.png` — these show the exact masked region
    and whatever was detected, even when zero LEDs were found.
 5. **Live Session** — set an optional duration (0 = manual stop), click
-   **Start**, watch both video feeds and the live plot, toggle either
-   metric series on/off, and click **Stop** (or let the duration elapse) to
-   write the CSVs under `output/`.
+   **Start**, watch both video feeds, the live plot (toggle either metric
+   series on/off), and the second dual-axis graph (HW timestamp gap vs.
+   running frame-drop count). Click **Save Debug Snapshot** any time to
+   check the LED on/off classification against the live video. Click
+   **Stop** (or let the duration elapse) to write the CSVs, a summary plot
+   image, and a final debug snapshot under `output/`.
 
 ## Configuration files
 
@@ -119,9 +126,18 @@ Everything lands under `output/` (created automatically):
 - `debug_ir_detection.png`, `debug_rgb_detection.png` — calibration's masked
   frame with detected LEDs circled and numbered.
 - `pipeline_sync_raw.csv` — every kept frame-pair from a live session
-  (timestamps, pairing gap, position gap, exclusion flags).
+  (timestamps, pairing gap, position gap, exclusion flags, and per-stream
+  `ir_frame_drop`/`rgb_frame_drop` booleans).
 - `pipeline_sync_frame_drops.csv` — same schema, only the frame-drop-excluded
   rows.
+- `pipeline_sync_plot.png` — a static end-of-session plot (pairing gap,
+  position gap, and cumulative frame-drop count, all vs. pair index),
+  rendered from the same rows as the CSVs.
+- `live_led_state_ir.png`, `live_led_state_rgb.png` — LED on/off debug
+  snapshot from the most recent live-session frame: each calibrated LED
+  position circled green if currently classified "on", red if "off" - lets
+  you visually confirm the threshold classification is actually correct.
+  Written automatically at Stop, or any time via **Save Debug Snapshot**.
 
 ## Troubleshooting
 

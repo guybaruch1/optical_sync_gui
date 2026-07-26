@@ -9,6 +9,16 @@ class FakeMetric(Metric):
         return MetricResult(name=self.name, value=float(sample.pair_index), excluded=False, exclude_reason=None)
 
 
+class FakeMetricWithExtra(Metric):
+    name = "fake_with_extra"
+
+    def update(self, sample):
+        return MetricResult(
+            name=self.name, value=1.0, excluded=False, exclude_reason=None,
+            extra={"custom_flag": True},
+        )
+
+
 def test_start_sets_running_true():
     session = TestSession(TestSessionConfig(metrics=[FakeMetric()]))
     assert session.is_running is False
@@ -25,6 +35,13 @@ def test_process_pair_returns_flat_row_and_buffers_it():
     assert row["fake_metric"] == 0.0
     assert row["fake_metric_excluded"] is False
     assert row["fake_metric_exclude_reason"] is None
+
+
+def test_process_pair_folds_extra_dict_into_row():
+    session = TestSession(TestSessionConfig(metrics=[FakeMetricWithExtra()]))
+    session.start()
+    row = session.process_pair(FramePairSample(pair_index=0, ir_ts_us=0.0, rgb_ts_us=0.0))
+    assert row["custom_flag"] is True
 
 
 def test_stop_returns_all_buffered_rows_and_sets_running_false():
