@@ -73,13 +73,25 @@ class LiveSessionPage(QWidget):
         )
         toggle_row.addWidget(self.pairing_gap_checkbox)
         toggle_row.addWidget(self.position_gap_checkbox)
-        layout.addLayout(toggle_row)
 
-        bottom_row = QHBoxLayout()
         self.live_plot = LivePlot()
         self.live_plot.add_series("pairing_gap_us", color="r")
         self.live_plot.add_series("position_gap_ms", color="g")
-        bottom_row.addWidget(self.live_plot, stretch=2)
+
+        self.drop_plot = LivePlot()
+        self.drop_plot.setLabel("left", "Frame Drops (count)")
+        self.drop_plot.setLabel("bottom", "Pair Index")
+        self.drop_plot.add_series("frame_drops", color=(255, 140, 0))
+
+        # Both graphs live in the same column with equal stretch, so they
+        # get identical width AND height - previously live_plot shared its
+        # row with stats_panel while drop_plot had the full row to itself,
+        # so the two ended up different sizes despite looking like they
+        # should match.
+        graphs_column = QVBoxLayout()
+        graphs_column.addLayout(toggle_row)
+        graphs_column.addWidget(self.live_plot, stretch=1)
+        graphs_column.addWidget(self.drop_plot, stretch=1)
 
         self.stats_panel = StatsPanel()
         self.stats_panel.add_field("frame_index", "Frame Index")
@@ -88,16 +100,11 @@ class LiveSessionPage(QWidget):
         self.stats_panel.add_field("switch_time_ms", "LED Switch Time (ms)")
         self.stats_panel.add_field("ir_frame_drops", "IR Frame Drops")
         self.stats_panel.add_field("rgb_frame_drops", "RGB Frame Drops")
-        bottom_row.addWidget(self.stats_panel, stretch=1)
-        layout.addLayout(bottom_row)
 
-        drop_row = QHBoxLayout()
-        self.drop_plot = LivePlot()
-        self.drop_plot.setLabel("left", "Frame Drops (count)")
-        self.drop_plot.setLabel("bottom", "Pair Index")
-        self.drop_plot.add_series("frame_drops", color=(255, 140, 0))
-        drop_row.addWidget(self.drop_plot)
-        layout.addLayout(drop_row)
+        middle_row = QHBoxLayout()
+        middle_row.addLayout(graphs_column, stretch=2)
+        middle_row.addWidget(self.stats_panel, stretch=1)
+        layout.addLayout(middle_row)
 
         control_row = QHBoxLayout()
         control_row.addWidget(QLabel("Duration (s, 0 = manual stop):"))
@@ -168,6 +175,17 @@ class LiveSessionPage(QWidget):
         self._periodic_snapshot_count = 0
         self._clear_periodic_snapshots(ctx["output_dir"])
 
+        if self.engine_thread is not None:
+            # Defense-in-depth: the Start button shouldn't be clickable
+            # again until _on_engine_thread_finished has already fired (see
+            # below), so this should return immediately. But if it somehow
+            # isn't done yet, block until it is rather than let a second
+            # ContinuousCapture/LEDPanel session race the first one for the
+            # same physical camera - that race is what caused
+            # "QThread: Destroyed while thread '' is still running" and the
+            # crash/freeze it led to.
+            self.engine_thread.wait()
+
         self.engine_thread = SessionEngineThread(
             ctx["ctx"], ctx["device_serial"], ctx["ir_resolution"], ctx["ir_fps"],
             ctx["color_resolution"], ctx["color_fps"], test_session,
@@ -180,6 +198,15 @@ class LiveSessionPage(QWidget):
         self.engine_thread.stats_ready.connect(self._on_stats_ready)
         self.engine_thread.session_finished.connect(self._on_session_finished)
         self.engine_thread.error.connect(self._on_error)
+        # QThread's own finished signal - unlike session_finished/error
+        # (emitted inside SessionEngineThread.run()'s try block), this only
+        # fires once run() has fully returned, including its finally block
+        # (stopping the camera pipeline, stopping the LED panel). Gating
+        # "Start is clickable again" on this, not on session_finished/error,
+        # is the actual fix - re-enabling Start any earlier let a new
+        # session's camera/LED-panel calls race the old thread's still-running
+        # cleanup for the same physical hardware.
+        self.engine_thread.finished.connect(self._on_engine_thread_finished)
         self.engine_thread.start()
 
         self.status_label.setText("")
@@ -310,6 +337,14 @@ class LiveSessionPage(QWidget):
         export_session_csvs(rows, self._context["kept_csv_path"], self._context["dropped_csv_path"])
         export_session_plot(rows, os.path.join(self._context["output_dir"], "pipeline_sync_plot.png"))
         self._save_led_state_debug_images()
+        # Button re-enabling happens in _on_engine_thread_finished, not here -
+        # this fires before SessionEngineThread.run()'s finally block (camera
+        # pipeline/LED panel cleanup) has actually completed.
+
+    def _on_engine_thread_finished(self):
+        # QThread.finished - fires only once run() has fully returned,
+        # finally block included, so it's safe to let the user start a new
+        # session now (the camera/LED panel are actually free).
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
@@ -353,9 +388,8 @@ class LiveSessionPage(QWidget):
 
     def _on_error(self, message):
         # Surfaces a hardware failure (e.g. camera unplugged mid-session) to
-        # the operator and resets controls so Start can be retried, rather
-        # than leaving Stop enabled against a worker thread that already
-        # exited its run() loop.
+        # the operator. Button re-enabling happens in
+        # _on_engine_thread_finished, not here - this fires before
+        # SessionEngineThread.run()'s finally block (camera pipeline/LED
+        # panel cleanup) has actually completed.
         self.status_label.setText("Error: {}".format(message))
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
