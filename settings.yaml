@@ -1,7 +1,7 @@
 # Hand-edited settings for the RGB/IR sync POC.
 #
-# This is the ONE file meant to be edited by hand between runs - rig position,
-# camera params, and detection/test tuning all live here. Unlike config.yaml
+# This is the ONE file meant to be edited by hand between runs - camera
+# params and detection/test tuning all live here. Unlike config.yaml
 # (which led_calibration.py overwrites wholesale every run and must never be
 # hand-edited), nothing auto-rewrites this file, so comments and formatting
 # are safe to rely on.
@@ -13,53 +13,6 @@ camera:
   # support it (e.g. no HD@30fps on some models). Not a hard requirement.
   ir: {width: 1280, height: 720, fps: 30}
   color: {width: 1280, height: 720, fps: 30}
-
-rig:
-  # Which physical setup (distance x height combo) is currently on the bench.
-  # Change this by hand whenever you physically move the camera, then re-run
-  # led_calibration.py (check console prints "Detected 100 LED(s)" for BOTH
-  # sensors before trusting it). Applies regardless of which camera unit is
-  # mounted - rig position and camera identity are independent.
-  current_setup: dist2_height2
-
-  # (x, y, w, h) in pixels, in each sensor's own native frame. IR and RGB have
-  # separate boxes since they're different physical sensors with different
-  # FOV/alignment. Get these by running roi_picker.py for the current
-  # physical setup and pasting the printed values in below.
-  # closer or lower is lower number.
-  #
-  # Keyed by camera NAME (top level, e.g. "Intel RealSense D435I") then rig
-  # setup (second level) - different camera models see the panel differently.
-  # The name is read automatically at runtime (realsense_utils.get_device_name,
-  # via rs.camera_info.name) - you never type it in yourself except when
-  # adding a brand-new camera model's block below.
-  # NOTE: this keys by MODEL, not individual physical unit - two distinct
-  # units of the same model share one block below.
-  roi:
-    "Intel RealSense D435I":
-      dist1_height1: {ir: [554, 13, 374, 338], rgb: [612, 3, 361, 324]}
-      dist1_height2: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist1_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist2_height1: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist2_height2: {ir: [589, 211, 202, 203], rgb: [611, 161, 289, 286]}
-      dist2_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height1: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height2: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-    "Intel RealSense D415":
-      dist1_height1: {ir: [554, 13, 374, 338], rgb: [612, 3, 361, 324]}
-      dist1_height2: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist1_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist2_height1: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist2_height2: {ir: [577, 177, 303, 301], rgb: [628, 174, 292, 287]}
-      dist2_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height1: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height2: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-      dist3_height3: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-    # Add another block here for each additional camera model, e.g.:
-    # "Intel RealSense D415":
-    #   dist1_height1: {ir: [0, 0, 0, 0], rgb: [0, 0, 0, 0]}
-    #   ... (same 9 setup keys)
 
 calibration:
   # Frames to let each stream settle on before treating a frame as "good".

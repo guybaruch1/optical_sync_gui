@@ -90,7 +90,10 @@ class RoiSelectPage(QWidget):
             self.status_label.setText(
                 "WARNING: emitter_enabled not supported - confirm the IR projector is off manually."
             )
-        enable_auto_exposure(rgb_sensor)
+        if not enable_auto_exposure(rgb_sensor):
+            self.status_label.setText(
+                "WARNING: enable_auto_exposure not supported - confirm RGB auto-exposure is on manually."
+            )
 
         def turn_on_all_leds():
             LEDPanel.stop()
@@ -107,7 +110,16 @@ class RoiSelectPage(QWidget):
                 settle_frames=settle_frames,
             )
         finally:
-            LEDPanel.all_leds_off()
+            # Cleanup-only call: LEDPanel.all_leds_off() now raises if the
+            # panel command itself keeps failing (see LEDPanel._run). Swallow
+            # it here rather than letting it replace whatever exception the
+            # try block above may have raised (a finally-block exception
+            # always masks one from the try block in Python) - still surface
+            # it, since the operator needs to know to check the panel by hand.
+            try:
+                LEDPanel.all_leds_off()
+            except Exception as exc:
+                self.status_label.setText("Warning: failed to turn LEDs off during cleanup: {}".format(exc))
 
         ir_image = ir_bytes_to_image(ir_raw, *ir_resolution)
         rgb_image = yuyv_to_bgr(rgb_raw, *color_resolution)

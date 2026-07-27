@@ -14,7 +14,6 @@ def test_save_then_load_round_trips(tmp_path):
         ir_fps=30, ir_width=1280, ir_height=720,
         rgb_fps=30, rgb_width=1280, rgb_height=720,
         ir_roi=[10, 20, 100, 100], rgb_roi=[5, 15, 90, 90],
-        rig_setup_name="dist2_height2",
     )
     save_gui_state(original, str(path))
     loaded = load_gui_state(str(path))

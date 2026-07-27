@@ -122,6 +122,11 @@ class PairingGapMetric(Metric):
 def _is_frame_drop(prev_ts, curr_ts, fps, threshold_factor):
     if prev_ts is None:
         return False
+    if fps <= 0:
+        # Shouldn't happen with real hardware-reported fps, but a stray 0/negative
+        # value would otherwise divide-by-zero here instead of just reporting
+        # "can't tell" for this pair.
+        return False
     delta = curr_ts - prev_ts
     expected_delta = 1_000_000.0 / fps
     return delta < 0 or delta > expected_delta * threshold_factor

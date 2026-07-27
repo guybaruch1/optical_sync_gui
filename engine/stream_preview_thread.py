@@ -41,7 +41,10 @@ class StreamPreviewThread(QThread):
                 self.error.emit(
                     "This sensor/firmware does not expose emitter_enabled - confirm the IR projector is off manually."
                 )
-            enable_auto_exposure(rgb_sensor)
+            if not enable_auto_exposure(rgb_sensor):
+                self.error.emit(
+                    "This sensor/firmware does not expose enable_auto_exposure - confirm RGB auto-exposure is on manually."
+                )
 
             self._capture = ContinuousCapture(self.ir_resolution, self.ir_fps, self.color_resolution, self.color_fps)
             self._capture.start()

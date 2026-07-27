@@ -26,16 +26,32 @@ class LEDPanel:
         cmd = [LEDPanel.exe_name] + args.split()
         retries = 3
         _logger.info("Running cmd: %s", " ".join(cmd))
-        while retries > 0:
-            try:
-                check_call(cmd)
-                retries = 0
-            except (CalledProcessError, FileNotFoundError) as e:
-                _logger.error("Command returned with an error: %s", e)
-                _logger.info("Retries left: %d", retries - 1)
-                retries -= 1
-                time.sleep(0.5)
-        time.sleep(LEDPanel.cmd_delay)
+        last_error = None
+        try:
+            while retries > 0:
+                try:
+                    check_call(cmd)
+                    return
+                except (CalledProcessError, FileNotFoundError) as e:
+                    last_error = e
+                    retries -= 1
+                    _logger.error("Command returned with an error: %s", e)
+                    _logger.info("Retries left: %d", retries)
+                    if retries > 0:
+                        time.sleep(0.5)
+            # Exhausted all retries - the original code returned silently here,
+            # which let every caller (start(), set_speed_ms(), etc.) believe the
+            # panel command succeeded when it never did. A live session could
+            # then run to completion with the LED panel never actually scanning,
+            # producing a run's worth of misleading data with no indication
+            # anything went wrong - so this must raise instead.
+            raise RuntimeError(
+                "LEDPanel command failed after {} retries: {} ({})".format(
+                    3, cmd, last_error
+                )
+            )
+        finally:
+            time.sleep(LEDPanel.cmd_delay)
 
     @staticmethod
     def all_leds_on():

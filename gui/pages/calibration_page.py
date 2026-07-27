@@ -76,7 +76,8 @@ class CalibrationPage(QWidget):
 
         if not disable_ir_emitter(stereo_sensor):
             self._log("WARNING: emitter_enabled not supported - confirm the IR projector is off manually.")
-        enable_auto_exposure(rgb_sensor)
+        if not enable_auto_exposure(rgb_sensor):
+            self._log("WARNING: enable_auto_exposure not supported - confirm RGB auto-exposure is on manually.")
 
         def turn_on_all_leds():
             self._log("Turning on all LEDs...")
@@ -96,7 +97,16 @@ class CalibrationPage(QWidget):
                 settle_frames=settle_frames,
             )
         finally:
-            LEDPanel.all_leds_off()
+            # Cleanup-only call: LEDPanel.all_leds_off() now raises if the
+            # panel command itself keeps failing (see LEDPanel._run). Swallow
+            # it here rather than letting it replace whatever exception the
+            # try block above may have raised (a finally-block exception
+            # always masks one from the try block in Python) - still surface
+            # it, since the operator needs to know to check the panel by hand.
+            try:
+                LEDPanel.all_leds_off()
+            except Exception as exc:
+                self._log("WARNING: failed to turn LEDs off during cleanup: {}".format(exc))
 
         self._log("Turning LED panel off, capturing OFF-state frames...")
         ir_off_raw, rgb_off_raw = capture_synced_frame_pair(

@@ -86,7 +86,8 @@ class SessionEngineThread(QThread):
             stereo_sensor, rgb_sensor = get_sensors_for_device(self.ctx, self.device_serial)
             if not disable_ir_emitter(stereo_sensor):
                 self.error.emit("This sensor/firmware does not expose emitter_enabled - confirm the IR projector is off manually.")
-            enable_auto_exposure(rgb_sensor)
+            if not enable_auto_exposure(rgb_sensor):
+                self.error.emit("This sensor/firmware does not expose enable_auto_exposure - confirm RGB auto-exposure is on manually.")
 
             # Puts the panel into single-LED scanning mode at the configured
             # speed/direction and actually starts it moving - ported from
@@ -145,4 +146,12 @@ class SessionEngineThread(QThread):
         finally:
             if self._capture is not None:
                 self._capture.stop()
-            LEDPanel.stop()
+            # Cleanup-only call: LEDPanel.stop() now raises if the panel command
+            # itself keeps failing (see LEDPanel._run). This runs with no
+            # surrounding try/except in QThread.run(), so let a cleanup failure
+            # reach the UI via the error signal instead of crashing the thread
+            # unhandled or masking whatever exception the try block above raised.
+            try:
+                LEDPanel.stop()
+            except Exception as exc:
+                self.error.emit("Failed to stop LED panel during cleanup: {}".format(exc))
