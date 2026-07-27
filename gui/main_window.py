@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
         self.roi_page = RoiSelectPage()
         self.calibration_page = CalibrationPage()
         self.live_session_page = LiveSessionPage()
+        self._device_name = None
 
         for page in (self.device_page, self.stream_config_page, self.roi_page,
                      self.calibration_page, self.live_session_page):
@@ -47,8 +48,9 @@ class MainWindow(QMainWindow):
         self.device_page.refresh_devices(self.ctx)
         self.stack.setCurrentWidget(self.device_page)
 
-    def _on_device_chosen(self, serial):
+    def _on_device_chosen(self, serial, name):
         self.gui_state.device_serial = serial
+        self._device_name = name
         save_gui_state(self.gui_state)
         stereo_sensor, rgb_sensor = get_sensors_for_device(self.ctx, serial)
         camera_settings = self.settings["camera"]
@@ -147,7 +149,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.live_session_page)
 
     def _current_device_name(self):
-        for device in self.device_page._devices:
-            if device.serial == self.gui_state.device_serial:
-                return device.name
-        raise RuntimeError("Selected device serial no longer connected")
+        # Cached from DeviceSelectPage.device_chosen's payload (see
+        # _on_device_chosen), not looked up by reaching into device_page's own
+        # _devices list - that reach-through also meant raising if the device
+        # had since disappeared (e.g. the camera was unplugged mid-wizard).
+        return self._device_name

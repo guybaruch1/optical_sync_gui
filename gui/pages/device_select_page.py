@@ -7,7 +7,7 @@ from engine.streams import list_devices
 
 
 class DeviceSelectPage(QWidget):
-    device_chosen = Signal(str)
+    device_chosen = Signal(str, str)  # (serial, name)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,5 +29,11 @@ class DeviceSelectPage(QWidget):
 
     def _on_next_clicked(self):
         serial = self.combo.currentData()
-        if serial is not None:
-            self.device_chosen.emit(serial)
+        if serial is None:
+            return
+        # Emit the name alongside the serial so MainWindow doesn't need to
+        # reach into this page's own _devices list later to look it up (which
+        # also meant raising if the device had since disappeared, e.g. the
+        # camera was unplugged mid-wizard).
+        name = next((d.name for d in self._devices if d.serial == serial), "")
+        self.device_chosen.emit(serial, name)
