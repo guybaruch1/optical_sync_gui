@@ -5,7 +5,22 @@ from engine.metrics import (
     compute_position_gap,
     PairingGapMetric,
     PositionGapMetric,
+    _is_frame_drop,
 )
+
+
+def test_is_frame_drop_false_when_fps_is_zero():
+    # 1_000_000.0 / fps would otherwise raise ZeroDivisionError.
+    assert _is_frame_drop(prev_ts=0.0, curr_ts=100_000.0, fps=0, threshold_factor=1.5) is False
+
+
+def test_is_frame_drop_false_when_fps_is_negative():
+    assert _is_frame_drop(prev_ts=0.0, curr_ts=100_000.0, fps=-30, threshold_factor=1.5) is False
+
+
+def test_is_frame_drop_still_detects_a_real_drop_with_valid_fps():
+    # Expected delta at 30fps is ~33333us; a 500_000us jump should still trip it.
+    assert _is_frame_drop(prev_ts=0.0, curr_ts=500_000.0, fps=30, threshold_factor=1.5) is True
 
 
 def test_find_last_on_led_plain_block():
