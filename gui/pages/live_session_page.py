@@ -48,6 +48,8 @@ import glob
 import os
 
 import cv2
+from PySide6.QtCore import Qt, QSize, QRectF
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSpinBox, QLabel, QCheckBox, QFrame, QApplication,
 )
@@ -62,6 +64,41 @@ from domain.csv_export import export_session_csvs, export_series_csv
 from domain.plot_export import export_session_plot
 from domain.realsense_utils import draw_led_state_overlay, crop_to_roi
 from domain.running_stats import RunningStats
+
+
+def _build_copy_icon(color="#555555", size=18):
+    # Drawn in code, not a Unicode symbol glyph (e.g. the earlier "⧉") -
+    # the previous glyph wasn't in the default Windows UI font and
+    # rendered as a blank box. A painted icon looks identical on every
+    # system regardless of font glyph coverage. Two overlapping rounded
+    # squares - the standard "copy" icon shape - with the back square's
+    # corner erased under the front one so it reads as layered, not two
+    # crossing outlines.
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.4)
+
+    back = QRectF(size * 0.12, size * 0.12, size * 0.58, size * 0.58)
+    front = QRectF(size * 0.34, size * 0.34, size * 0.58, size * 0.58)
+
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(back, 2, 2)
+
+    painter.setCompositionMode(QPainter.CompositionMode_Clear)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(Qt.black)
+    painter.drawRoundedRect(front, 2, 2)
+
+    painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(front, 2, 2)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _short_camera_name(camera_name):
@@ -236,11 +273,10 @@ class LiveSessionPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(checkbox)
         row.addStretch(1)
-        # Plain text, not a symbol glyph (e.g. the previous "⧉") - that
-        # character isn't in most Windows UI fonts (Segoe UI included) and
-        # rendered as a blank/tofu box, making the button look empty/broken
-        # even though its click handler worked fine.
-        copy_button = QPushButton("Copy")
+        copy_button = QPushButton()
+        copy_button.setIcon(_build_copy_icon())
+        copy_button.setIconSize(QSize(14, 14))
+        copy_button.setFixedSize(24, 24)
         copy_button.setToolTip("Copy chart as image")
         copy_button.clicked.connect(lambda: self._copy_chart_image(plot_widget))
         export_button = QPushButton("Export CSV")
