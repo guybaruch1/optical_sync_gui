@@ -22,7 +22,6 @@ class GuiState:
     rgb_height: "int | None" = None
     ir_roi: "list[int] | None" = None
     rgb_roi: "list[int] | None" = None
-    rig_setup_name: "str | None" = None
 
 
 def load_gui_state(path="gui_state.json"):
