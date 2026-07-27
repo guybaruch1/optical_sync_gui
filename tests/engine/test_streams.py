@@ -3,7 +3,53 @@ import time
 
 import pytest
 import pyrealsense2 as rs
-from engine.streams import list_supported_profiles, match_profile, capture_synced_frame_pair
+from engine.streams import (
+    list_supported_profiles, match_profile, capture_synced_frame_pair,
+    disable_ir_emitter, enable_auto_exposure,
+)
+
+
+class FakeOptionSensor:
+    """Fake sensor exposing just enough of the .supports()/.set_option() API
+    for disable_ir_emitter/enable_auto_exposure - real pyrealsense2 sensors
+    aren't constructible without hardware."""
+
+    def __init__(self, supported_options):
+        self._supported_options = set(supported_options)
+        self.set_options = {}
+
+    def supports(self, option):
+        return option in self._supported_options
+
+    def set_option(self, option, value):
+        self.set_options[option] = value
+
+
+def test_disable_ir_emitter_sets_option_off_when_supported():
+    sensor = FakeOptionSensor(supported_options={rs.option.emitter_enabled})
+    assert disable_ir_emitter(sensor) is True
+    assert sensor.set_options[rs.option.emitter_enabled] == 0
+
+
+def test_disable_ir_emitter_returns_false_when_unsupported():
+    sensor = FakeOptionSensor(supported_options=set())
+    assert disable_ir_emitter(sensor) is False
+    assert sensor.set_options == {}
+
+
+def test_enable_auto_exposure_sets_option_on_when_supported():
+    sensor = FakeOptionSensor(supported_options={rs.option.enable_auto_exposure})
+    assert enable_auto_exposure(sensor) is True
+    assert sensor.set_options[rs.option.enable_auto_exposure] == 1
+
+
+def test_enable_auto_exposure_returns_false_when_unsupported():
+    # Callers rely on this to warn the operator (the same way they already do
+    # for disable_ir_emitter) instead of silently leaving auto-exposure
+    # however it was.
+    sensor = FakeOptionSensor(supported_options=set())
+    assert enable_auto_exposure(sensor) is False
+    assert sensor.set_options == {}
 
 
 class FakeVideoProfile:

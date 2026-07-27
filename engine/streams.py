@@ -172,8 +172,13 @@ def disable_ir_emitter(stereo_sensor):
 
 
 def enable_auto_exposure(sensor):
+    """Returns True/False like disable_ir_emitter, so callers can warn the
+    operator the same way when the sensor doesn't support the option instead
+    of silently proceeding with auto-exposure left however it was."""
     if sensor.supports(rs.option.enable_auto_exposure):
         sensor.set_option(rs.option.enable_auto_exposure, 1)
+        return True
+    return False
 
 
 class ContinuousCapture:
