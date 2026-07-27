@@ -1,7 +1,13 @@
 """Wizard step 5 - the live sync-test view: dual video panels (each
 showing a live LED on/off detection overlay), three live plots (HW TS
 latency, optical sync, frame drops), a live stats sidebar, and Start/Stop
-with an optional fixed duration. Saves periodic LED on/off debug
+with an optional fixed duration, LED switch time, and frame sample
+interval (display_stride) - all three read live from the toolbar at
+Start, not from settings.yaml/ctx, and locked (setEnabled(False)) for the
+duration of a run so a change can't misleadingly appear to apply to an
+already-running thread. None of the three are persisted anywhere, so a
+fresh app launch always starts back from settings.yaml's/the hardcoded
+defaults, never whatever was last typed. Saves periodic LED on/off debug
 snapshots during the run (every settings.yaml test.snapshot_every_n_pairs
 pairs, capped at test.max_snapshots per stream, filename includes the
 pair_index so it can be cross-checked against what was on screen and
@@ -260,6 +266,29 @@ class LiveSessionPage(QWidget):
         self.stop_button.setEnabled(False)
         control_row.addWidget(self.start_button)
         control_row.addWidget(self.stop_button)
+
+        control_row.addWidget(QLabel("LED Switch Time (ms):"))
+        self.switch_time_spinbox = QSpinBox()
+        self.switch_time_spinbox.setRange(1, 10000)
+        # Overridden with the settings.yaml default in set_context(); kept
+        # editable per-run (like duration) so switch speed can be tuned
+        # without hand-editing settings.yaml between runs.
+        self.switch_time_spinbox.setValue(1)
+        control_row.addWidget(self.switch_time_spinbox)
+
+        control_row.addWidget(QLabel("Frame Sample Interval:"))
+        self.frame_sample_interval_spinbox = QSpinBox()
+        self.frame_sample_interval_spinbox.setRange(1, 2000)
+        # Matches AcquisitionLoop/SessionEngineThread's own display_stride
+        # default - how many frame-pairs between video-panel and live-plot
+        # updates. Every pair is still processed/metriced/recorded either
+        # way; this only throttles how often the GUI actually redraws.
+        self.frame_sample_interval_spinbox.setValue(10)
+        self.frame_sample_interval_spinbox.setToolTip(
+            "Frame-pairs between video/plot updates (every pair is still recorded)."
+        )
+        control_row.addWidget(self.frame_sample_interval_spinbox)
+
         control_row.addStretch(1)
         self.export_csv_button = QPushButton("Export CSV")
         self.export_csv_button.clicked.connect(self._reexport_last_session_csvs)
@@ -340,6 +369,13 @@ class LiveSessionPage(QWidget):
             ir_roi=ir_roi, rgb_roi=rgb_roi,
         )
         self.stats_panel.set_value("switch_time_ms", switch_time_ms)
+        # settings.yaml's value is only the starting point shown in the
+        # toolbar - the spinbox itself (read in start_session(), not
+        # ctx["switch_time_ms"]) is what a run actually uses, so it can be
+        # tuned per-run without hand-editing settings.yaml. Not persisted
+        # anywhere, so a fresh app launch always starts back from this
+        # settings.yaml default, not whatever was last typed.
+        self.switch_time_spinbox.setValue(int(round(switch_time_ms)))
         short_name = _short_camera_name(camera_name)
         self.ir_title_label.setText("{} - IR".format(short_name))
         self.rgb_title_label.setText("{} - RGB".format(short_name))
@@ -347,9 +383,16 @@ class LiveSessionPage(QWidget):
     def start_session(self):
         ctx = self._context
         duration_s = self.duration_spinbox.value() or None
+        # Read live from the toolbar, not ctx["switch_time_ms"] - the
+        # spinbox is what the operator can tune per-run (see set_context).
+        # Used for BOTH the metric's math and the LED panel's actual scan
+        # speed (below) - they must agree, or position_gap_ms would be
+        # computed against a switch time the panel wasn't really using.
+        switch_time_ms = self.switch_time_spinbox.value()
+        display_stride = self.frame_sample_interval_spinbox.value()
         position_gap_metric = PositionGapMetric(
             ir_threshold=ctx["ir_threshold"], rgb_threshold=ctx["rgb_threshold"], num_leds=ctx["num_leds"],
-            switch_time_ms=ctx["switch_time_ms"], ir_fps=ctx["ir_fps"], rgb_fps=ctx["color_fps"],
+            switch_time_ms=switch_time_ms, ir_fps=ctx["ir_fps"], rgb_fps=ctx["color_fps"],
             frame_drop_threshold_factor=ctx["frame_drop_threshold_factor"],
             warmup_pairs_to_skip=ctx["warmup_pairs_to_skip"],
         )
@@ -397,8 +440,8 @@ class LiveSessionPage(QWidget):
             ctx["ctx"], ctx["device_serial"], ctx["ir_resolution"], ctx["ir_fps"],
             ctx["color_resolution"], ctx["color_fps"], test_session,
             ir_xy=ctx["ir_xy"], rgb_xy=ctx["rgb_xy"], neighborhood_size=ctx["neighborhood_size"],
-            scan_direction=ctx["scan_direction"], switch_time_ms=ctx["switch_time_ms"],
-            position_gap_metric=position_gap_metric,
+            scan_direction=ctx["scan_direction"], switch_time_ms=switch_time_ms,
+            display_stride=display_stride, position_gap_metric=position_gap_metric,
         )
         self.engine_thread.frame_ready.connect(self._on_frame_ready)
         self.engine_thread.row_ready.connect(self._on_row_ready)
@@ -419,6 +462,13 @@ class LiveSessionPage(QWidget):
         self.status_label.setText("")
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        # Changing any of these mid-run wouldn't retroactively apply to the
+        # thread that already started with the values read above, and would
+        # misleadingly suggest it did - lock them for the same span Start
+        # itself is locked (re-enabled together in _on_engine_thread_finished).
+        self.duration_spinbox.setEnabled(False)
+        self.switch_time_spinbox.setEnabled(False)
+        self.frame_sample_interval_spinbox.setEnabled(False)
 
     def stop_session(self):
         if self.engine_thread is not None:
@@ -598,6 +648,9 @@ class LiveSessionPage(QWidget):
         # session now (the camera/LED panel are actually free).
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.duration_spinbox.setEnabled(True)
+        self.switch_time_spinbox.setEnabled(True)
+        self.frame_sample_interval_spinbox.setEnabled(True)
 
     def _save_led_state_debug_images(self):
         # Also wired to the "Save Debug Snapshot" button for an on-demand

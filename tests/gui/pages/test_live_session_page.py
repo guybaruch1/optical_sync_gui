@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -125,3 +126,62 @@ def test_crop_to_roi_if_available_uses_rgb_roi_for_rgb_stream(qapp, tmp_path):
     result = page._crop_to_roi_if_available(image, "rgb")
 
     assert result.shape == (3, 3)
+
+
+class _FakeEngineThread:
+    """Stands in for SessionEngineThread so start_session() never touches
+    real hardware - records the kwargs it was constructed with so tests can
+    assert on what the toolbar's live values actually passed through."""
+    last_kwargs = None
+
+    def __init__(self, *args, **kwargs):
+        _FakeEngineThread.last_kwargs = kwargs
+        self.frame_ready = MagicMock()
+        self.row_ready = MagicMock()
+        self.stats_ready = MagicMock()
+        self.session_finished = MagicMock()
+        self.error = MagicMock()
+        self.finished = MagicMock()
+
+    def start(self):
+        pass
+
+    def wait(self):
+        pass
+
+
+def test_set_context_prefills_switch_time_spinbox_from_settings_value(qapp, tmp_path):
+    page = LiveSessionPage()
+    page.set_context(**_minimal_context(tmp_path, switch_time_ms=7))
+    assert page.switch_time_spinbox.value() == 7
+
+
+def test_start_session_passes_toolbar_switch_time_and_frame_sample_interval(qapp, tmp_path):
+    page = LiveSessionPage()
+    page.set_context(**_minimal_context(tmp_path, switch_time_ms=1))
+    page.switch_time_spinbox.setValue(42)
+    page.frame_sample_interval_spinbox.setValue(99)
+
+    with patch("gui.pages.live_session_page.SessionEngineThread", _FakeEngineThread):
+        page.start_session()
+
+    assert _FakeEngineThread.last_kwargs["switch_time_ms"] == 42
+    assert _FakeEngineThread.last_kwargs["display_stride"] == 99
+
+
+def test_start_session_locks_duration_switch_time_and_frame_sample_interval(qapp, tmp_path):
+    page = LiveSessionPage()
+    page.set_context(**_minimal_context(tmp_path))
+
+    with patch("gui.pages.live_session_page.SessionEngineThread", _FakeEngineThread):
+        page.start_session()
+
+    assert not page.duration_spinbox.isEnabled()
+    assert not page.switch_time_spinbox.isEnabled()
+    assert not page.frame_sample_interval_spinbox.isEnabled()
+
+    page._on_engine_thread_finished()
+
+    assert page.duration_spinbox.isEnabled()
+    assert page.switch_time_spinbox.isEnabled()
+    assert page.frame_sample_interval_spinbox.isEnabled()
