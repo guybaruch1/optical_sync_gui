@@ -1,5 +1,5 @@
 import csv
-from domain.csv_export import export_session_csvs
+from domain.csv_export import export_session_csvs, export_series_csv
 
 
 def _row(pair_index, exclude_reason=None):
@@ -41,3 +41,19 @@ def test_export_session_csvs_empty_rows(tmp_path):
     assert (n_kept, n_dropped) == (0, 0)
     assert kept_path.exists()
     assert dropped_path.exists()
+
+
+def test_export_series_csv_writes_one_column_per_series(tmp_path):
+    path = tmp_path / "chart.csv"
+    export_series_csv(
+        str(path),
+        series_x=[0, 1, 2],
+        series_y_by_name={"ir_frame_drops": [0, 1, 0], "rgb_frame_drops": [0, 0, -1]},
+    )
+
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    assert [r["pair_index"] for r in rows] == ["0", "1", "2"]
+    assert [r["ir_frame_drops"] for r in rows] == ["0", "1", "0"]
+    assert [r["rgb_frame_drops"] for r in rows] == ["0", "0", "-1"]

@@ -47,11 +47,14 @@ class LivePlot(pg.PlotWidget):
         self._x_data = {}
         self._y_data = {}
 
-    def add_series(self, name, color):
+    def add_series(self, name, color, display_name=None):
         pen = pg.mkPen(color=color, width=2)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
-        curve = self.plot([], [], pen=pen, name=name, connect="finite")
+        # display_name is only for the legend text - name stays the lookup
+        # key everywhere else (add_point/get_series_data/set_series_visible),
+        # so a user-facing rename never has to touch those call sites.
+        curve = self.plot([], [], pen=pen, name=display_name or name, connect="finite")
         self._curves[name] = curve
         self._x_data[name] = deque(maxlen=self._max_points)
         self._y_data[name] = deque(maxlen=self._max_points)

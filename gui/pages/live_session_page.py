@@ -1,6 +1,6 @@
 """Wizard step 5 - the live sync-test view: dual video panels (each
-showing a live LED on/off detection overlay), three live plots (pairing
-gap, position gap, frame drops), a live stats sidebar, and Start/Stop
+showing a live LED on/off detection overlay), three live plots (HW TS
+latency, optical sync, frame drops), a live stats sidebar, and Start/Stop
 with an optional fixed duration. Saves periodic LED on/off debug
 snapshots during the run (every settings.yaml test.snapshot_every_n_pairs
 pairs, capped at test.max_snapshots per stream, filename includes the
@@ -10,6 +10,13 @@ against the CSV's pair_index column). At Stop, writes the CSVs
 (domain.plot_export.export_session_plot), and one final LED on/off debug
 snapshot for each stream - the same final snapshot can also be saved on
 demand mid-session via the "Save Debug Snapshot" button.
+
+"HW TS Latency" and "Optical Sync" are the user-facing names for the
+underlying pairing_gap_us/position_gap_ms metrics (engine.metrics) - the
+data/series/dict keys stay as pairing_gap_us/position_gap_ms throughout
+(CSV columns, stats_panel field keys, LivePlot series keys); only the
+displayed labels (checkboxes, axis titles, legend, stat tiles) use the
+renamed terms, via LivePlot.add_series's display_name param.
 
 pairing_gap_us and position_gap_ms each get their own single-axis plot,
 not one dual-axis chart sharing left/right y-axes - the dataviz skill's
@@ -26,20 +33,23 @@ Visual layout/styling (page background, per-chart header rows, stat
 tiles, chart colors, toolbar) matches the design mockup from the
 claude.ai/design project "GUI layout redesign options"
 (file "Optical Sync GUI.dc.html") - imported via the DesignSync MCP tool.
-Some controls that appear in that mockup are visual-only placeholders for
-now, not wired to real behavior (see docs/todo_design_followups.md):
-the per-chart "Copy" and "Export CSV" buttons, the toolbar's "Export CSV"
-button, and the "Stats" section's avg/std/max tiles (nothing computes
-those yet). The frame-drops checkbox IS fully wired, since it only reuses
-LivePlot.set_series_visible - the same mechanism the other two checkboxes
-already used."""
+The per-chart "Copy" button copies that chart as an image to the
+clipboard; the per-chart "Export CSV" button writes that chart's own
+plotted series (domain.csv_export.export_series_csv) to output_dir; the
+toolbar's "Export CSV" button re-writes the last completed session's CSVs
+(the same rows _on_session_finished already wrote once at Stop); the
+"Stats" section's avg/std/max tiles are backed by domain.running_stats.RunningStats,
+updated every pair (same cadence as the frame-drop counters) and pushed to
+the tiles on the same throttled cadence the live plots update on. The
+frame-drops checkbox reuses LivePlot.set_series_visible - the same
+mechanism the other two checkboxes use."""
 
 import glob
 import os
 
 import cv2
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSpinBox, QLabel, QCheckBox, QFrame,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSpinBox, QLabel, QCheckBox, QFrame, QApplication,
 )
 
 from gui.widgets.video_panel import VideoPanel
@@ -48,9 +58,10 @@ from gui.widgets.stats_panel import StatsPanel
 from engine.session_engine import SessionEngineThread
 from engine.test_session import TestSession, TestSessionConfig
 from engine.metrics import PairingGapMetric, PositionGapMetric
-from domain.csv_export import export_session_csvs
+from domain.csv_export import export_session_csvs, export_series_csv
 from domain.plot_export import export_session_plot
 from domain.realsense_utils import draw_led_state_overlay, crop_to_roi
+from domain.running_stats import RunningStats
 
 
 def _short_camera_name(camera_name):
@@ -76,6 +87,9 @@ class LiveSessionPage(QWidget):
         self._last_ir_on_mask = None
         self._last_rgb_on_mask = None
         self._periodic_snapshot_count = 0
+        self._hw_ts_latency_stats = RunningStats()
+        self._optical_sync_stats = RunningStats()
+        self._last_session_rows = None
 
         self.setStyleSheet("LiveSessionPage { background-color: #f2f0ea; }")
         layout = QVBoxLayout(self)
@@ -106,12 +120,12 @@ class LiveSessionPage(QWidget):
         video_row.addStretch(1)
         layout.addLayout(video_row)
 
-        self.pairing_gap_checkbox = QCheckBox("Pairing gap (us)")
+        self.pairing_gap_checkbox = QCheckBox("HW TS Latency (us)")
         self.pairing_gap_checkbox.setChecked(True)
         self.pairing_gap_checkbox.toggled.connect(
             lambda checked: self.pairing_plot.set_series_visible("pairing_gap_us", checked)
         )
-        self.position_gap_checkbox = QCheckBox("Position gap (ms)")
+        self.position_gap_checkbox = QCheckBox("Optical Sync (ms)")
         self.position_gap_checkbox.setChecked(True)
         self.position_gap_checkbox.toggled.connect(
             lambda checked: self.position_plot.set_series_visible("position_gap_ms", checked)
@@ -126,14 +140,14 @@ class LiveSessionPage(QWidget):
         # separately (see the module docstring), so it still needs two
         # distinct, harmonious colors.
         self.pairing_plot = LivePlot()
-        self.pairing_plot.setLabel("left", "HW Timestamp Gap (us)")
+        self.pairing_plot.setLabel("left", "HW TS Latency (us)")
         self.pairing_plot.setLabel("bottom", "Pair Index")
-        self.pairing_plot.add_series("pairing_gap_us", color="#4a7fe0")
+        self.pairing_plot.add_series("pairing_gap_us", color="#4a7fe0", display_name="HW TS Latency (us)")
 
         self.position_plot = LivePlot()
-        self.position_plot.setLabel("left", "Position Gap (ms)")
+        self.position_plot.setLabel("left", "Optical Sync (ms)")
         self.position_plot.setLabel("bottom", "Pair Index")
-        self.position_plot.add_series("position_gap_ms", color="#3fbf9e")
+        self.position_plot.add_series("position_gap_ms", color="#3fbf9e", display_name="Optical Sync (ms)")
 
         self.drop_plot = LivePlot()
         self.drop_plot.setLabel("left", "Frame Drops (IR up / RGB down)")
@@ -145,34 +159,34 @@ class LiveSessionPage(QWidget):
         self.drop_plot.add_series("ir_frame_drops", color="#e08a3f")
         self.drop_plot.add_series("rgb_frame_drops", color="#c0587a")
 
-        # Each graph gets its own header row (checkbox + Copy/Export CSV
-        # stubs) directly above it, all three in one column with equal
-        # width, but the frame-drops graph gets half the height of the
-        # other two - it's a simpler 0/1 signal that doesn't need as much
-        # vertical room, matching the design mockup.
+        # Each graph gets its own header row (checkbox + Copy/Export CSV)
+        # directly above it, all three in one column with equal width, but
+        # the frame-drops graph gets half the height of the other two -
+        # it's a simpler 0/1 signal that doesn't need as much vertical
+        # room, matching the design mockup.
         graphs_column = QVBoxLayout()
-        graphs_column.addLayout(self._make_chart_header(self.pairing_gap_checkbox))
+        graphs_column.addLayout(self._make_chart_header(self.pairing_gap_checkbox, self.pairing_plot,
+                                                          ["pairing_gap_us"]))
         graphs_column.addWidget(self.pairing_plot, stretch=2)
-        graphs_column.addLayout(self._make_chart_header(self.position_gap_checkbox))
+        graphs_column.addLayout(self._make_chart_header(self.position_gap_checkbox, self.position_plot,
+                                                          ["position_gap_ms"]))
         graphs_column.addWidget(self.position_plot, stretch=2)
-        graphs_column.addLayout(self._make_chart_header(self.frame_drops_checkbox))
+        graphs_column.addLayout(self._make_chart_header(self.frame_drops_checkbox, self.drop_plot,
+                                                          ["ir_frame_drops", "rgb_frame_drops"]))
         graphs_column.addWidget(self.drop_plot, stretch=1)
 
         self.stats_panel = StatsPanel()
         self.stats_panel.setFixedWidth(220)
         self.stats_panel.add_section_header("Live Data")
         self.stats_panel.add_field("frame_index", "Frame Index")
-        self.stats_panel.add_field("pairing_gap_us", "HW Timestamp Gap (us)")
-        self.stats_panel.add_field("position_gap_ms", "Position Gap (ms)")
+        self.stats_panel.add_field("pairing_gap_us", "HW TS Latency (us)")
+        self.stats_panel.add_field("position_gap_ms", "Optical Sync (ms)")
         self.stats_panel.add_field("switch_time_ms", "LED Switch Time (ms)")
         self.stats_panel.add_field("ir_frame_drops", "IR Frame Drops")
         self.stats_panel.add_field("rgb_frame_drops", "RGB Frame Drops")
         self.stats_panel.add_section_header("Stats")
-        # Placeholder tiles only - nothing computes a running avg/std/max
-        # yet (see docs/todo_design_followups.md); left at their default
-        # "-" rather than shown with fake numbers.
-        self.stats_panel.add_field("hw_ts_sync_summary", "HW TS Sync avg / std / max")
-        self.stats_panel.add_field("optical_latency_summary", "Optical Latency avg / std / max")
+        self.stats_panel.add_field("hw_ts_latency_summary", "HW TS Latency avg / std / max")
+        self.stats_panel.add_field("optical_sync_summary", "Optical Sync avg / std / max")
 
         middle_row = QHBoxLayout()
         middle_row.addLayout(graphs_column, stretch=1)
@@ -193,6 +207,12 @@ class LiveSessionPage(QWidget):
         self.start_button.setStyleSheet(
             "QPushButton { background-color: #2f6fed; color: white; border: 1px solid #2f6fed;"
             " border-radius: 4px; padding: 5px 14px; }"
+            # Setting an explicit background-color above opts this button out
+            # of Qt's automatic disabled/greyed palette - without a :disabled
+            # rule of its own, setEnabled(False) still blocks clicks but the
+            # button stays the same solid blue, looking just as clickable as
+            # when it's actually safe to click.
+            "QPushButton:disabled { background-color: #b7c7f0; color: #eef2fc; border: 1px solid #b7c7f0; }"
         )
         self.start_button.clicked.connect(self.start_session)
         self.stop_button = QPushButton("Stop")
@@ -201,14 +221,8 @@ class LiveSessionPage(QWidget):
         control_row.addWidget(self.start_button)
         control_row.addWidget(self.stop_button)
         control_row.addStretch(1)
-        # Visual placeholder - CSVs are still only written automatically
-        # at Stop (see docs/todo_design_followups.md for manual export).
         self.export_csv_button = QPushButton("Export CSV")
-        self.export_csv_button.clicked.connect(
-            lambda: self.status_label.setText(
-                "Manual CSV export isn't implemented yet - CSVs are written automatically at Stop."
-            )
-        )
+        self.export_csv_button.clicked.connect(self._reexport_last_session_csvs)
         self.save_debug_button = QPushButton("Save Debug Snapshot")
         self.save_debug_button.clicked.connect(self._save_led_state_debug_images)
         control_row.addWidget(self.export_csv_button)
@@ -218,24 +232,50 @@ class LiveSessionPage(QWidget):
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
 
-    def _make_chart_header(self, checkbox):
-        # Copy/Export CSV are visual placeholders for now (see module
-        # docstring + docs/todo_design_followups.md) - inert beyond a
-        # status_label message, not real chart-copy/export behavior yet.
+    def _make_chart_header(self, checkbox, plot_widget, series_names):
         row = QHBoxLayout()
         row.addWidget(checkbox)
         row.addStretch(1)
-        copy_button = QPushButton("⧉")
-        copy_button.setFixedSize(22, 22)
-        copy_button.setToolTip("Copy (not implemented yet)")
-        copy_button.clicked.connect(lambda: self.status_label.setText("Copy isn't implemented yet."))
+        # Plain text, not a symbol glyph (e.g. the previous "⧉") - that
+        # character isn't in most Windows UI fonts (Segoe UI included) and
+        # rendered as a blank/tofu box, making the button look empty/broken
+        # even though its click handler worked fine.
+        copy_button = QPushButton("Copy")
+        copy_button.setToolTip("Copy chart as image")
+        copy_button.clicked.connect(lambda: self._copy_chart_image(plot_widget))
         export_button = QPushButton("Export CSV")
-        export_button.clicked.connect(
-            lambda: self.status_label.setText("Per-chart CSV export isn't implemented yet.")
-        )
+        export_button.clicked.connect(lambda: self._export_chart_csv(plot_widget, series_names))
         row.addWidget(copy_button)
         row.addWidget(export_button)
         return row
+
+    def _copy_chart_image(self, plot_widget):
+        QApplication.clipboard().setPixmap(plot_widget.grab())
+        self.status_label.setText("Chart copied to clipboard as an image.")
+
+    def _export_chart_csv(self, plot_widget, series_names):
+        if self._context is None:
+            self.status_label.setText("No session data yet - click Start first.")
+            return
+        x_values, _ = plot_widget.get_series_data(series_names[0])
+        if not x_values:
+            self.status_label.setText("No chart data yet - wait a moment after Start.")
+            return
+        series_y_by_name = {name: plot_widget.get_series_data(name)[1] for name in series_names}
+        path = os.path.join(self._context["output_dir"], "{}_chart_export.csv".format(series_names[0]))
+        export_series_csv(path, x_values, series_y_by_name)
+        self.status_label.setText("Exported chart CSV: {}".format(path))
+
+    def _reexport_last_session_csvs(self):
+        if self._last_session_rows is None:
+            self.status_label.setText("No completed session yet - run Start then Stop first.")
+            return
+        export_session_csvs(
+            self._last_session_rows, self._context["kept_csv_path"], self._context["dropped_csv_path"]
+        )
+        self.status_label.setText(
+            "Re-exported CSVs: {}, {}".format(self._context["kept_csv_path"], self._context["dropped_csv_path"])
+        )
 
     def _set_frame_drops_visible(self, checked):
         self.drop_plot.set_series_visible("ir_frame_drops", checked)
@@ -299,6 +339,8 @@ class LiveSessionPage(QWidget):
         self._last_ir_on_mask = None
         self._last_rgb_on_mask = None
         self._periodic_snapshot_count = 0
+        self._hw_ts_latency_stats = RunningStats()
+        self._optical_sync_stats = RunningStats()
         self._clear_periodic_snapshots(ctx["output_dir"])
 
         if self.engine_thread is not None:
@@ -442,6 +484,17 @@ class LiveSessionPage(QWidget):
             self._rgb_drop_count += 1
             self._rgb_drop_since_last_plot = True
 
+        # Every pair, like the drop counters above - RunningStats.update()
+        # is an O(1) Welford step, cheap enough to sustain unthrottled
+        # (unlike add_point()/setData(), see the big comment on this
+        # method). Excluded pairs are skipped, same convention as the
+        # plots (an excluded pair can carry a wild value, e.g. during
+        # auto-exposure warmup, that would otherwise skew the running mean).
+        if row.get("pairing_gap_us") is not None and not row.get("pairing_gap_us_excluded"):
+            self._hw_ts_latency_stats.update(row["pairing_gap_us"])
+        if row.get("position_gap_ms") is not None and not row.get("position_gap_ms_excluded"):
+            self._optical_sync_stats.update(row["position_gap_ms"])
+
     def _on_stats_ready(self, stats):
         # Fired only at the throttled display_stride cadence (same frames
         # the video panels update on) - this is also where plot updates
@@ -480,7 +533,11 @@ class LiveSessionPage(QWidget):
         self._ir_drop_since_last_plot = False
         self._rgb_drop_since_last_plot = False
 
+        self.stats_panel.set_value("hw_ts_latency_summary", self._hw_ts_latency_stats.summary_text())
+        self.stats_panel.set_value("optical_sync_summary", self._optical_sync_stats.summary_text())
+
     def _on_session_finished(self, rows):
+        self._last_session_rows = rows
         export_session_csvs(rows, self._context["kept_csv_path"], self._context["dropped_csv_path"])
         export_session_plot(rows, os.path.join(self._context["output_dir"], "pipeline_sync_plot.png"))
         self._save_led_state_debug_images()

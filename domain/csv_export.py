@@ -13,6 +13,23 @@ file, just flagged via its own column.
 import csv
 
 
+def export_series_csv(path, series_x, series_y_by_name):
+    """Writes one chart's own plotted series - not a TestSession row export.
+    series_y_by_name's series all share series_x - true here because every
+    series on one LivePlot is appended together in the same
+    LiveSessionPage._on_stats_ready tick, so they're always the same length
+    and in the same order."""
+    fieldnames = ["pair_index"] + list(series_y_by_name.keys())
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for i, x in enumerate(series_x):
+            row = {"pair_index": x}
+            for name, y_values in series_y_by_name.items():
+                row[name] = y_values[i]
+            writer.writerow(row)
+
+
 def export_session_csvs(rows, kept_path, dropped_path, drop_reason="frame_drop"):
     fieldnames = []
     for row in rows:
