@@ -21,3 +21,14 @@ def test_multiple_fields_are_independent(qapp):
     panel.set_value("switch_time_ms", 1.0)
     assert "-12.5" in panel._value_labels["pairing_gap_us"].text()
     assert "1.0" in panel._value_labels["switch_time_ms"].text()
+
+
+def test_add_section_header_does_not_raise_and_is_a_separate_widget(qapp):
+    panel = StatsPanel()
+    panel.add_section_header("Live Data")
+    panel.add_field("frame_index", "Frame Index")
+    panel.add_section_header("Stats")
+    panel.add_field("hw_ts_sync_summary", "HW TS Sync avg / std / max")
+    # 2 headers + 2 field tiles = 4 top-level items in the layout
+    assert panel._layout.count() == 4
+    assert panel._value_labels["hw_ts_sync_summary"].text() == "-"

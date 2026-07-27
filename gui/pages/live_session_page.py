@@ -1,31 +1,45 @@
 """Wizard step 5 - the live sync-test view: dual video panels (each
-showing a live LED on/off detection overlay), a togglable/stacked live
-plot of both metrics, a separate frame-drops-per-pair plot, a live stats
-sidebar, and Start/Stop with an optional fixed duration. Saves periodic
-LED on/off debug snapshots during the run (every settings.yaml
-test.snapshot_every_n_pairs pairs, capped at test.max_snapshots per
-stream, filename includes the pair_index so it can be cross-checked
-against what was on screen and against the CSV's pair_index column). At
-Stop, writes the CSVs (domain.csv_export.export_session_csvs), a static
-end-of-run plot image (domain.plot_export.export_session_plot), and one
-final LED on/off debug snapshot for each stream - the same final
-snapshot can also be saved on demand mid-session via the "Save Debug
-Snapshot" button.
+showing a live LED on/off detection overlay), three live plots (pairing
+gap, position gap, frame drops), a live stats sidebar, and Start/Stop
+with an optional fixed duration. Saves periodic LED on/off debug
+snapshots during the run (every settings.yaml test.snapshot_every_n_pairs
+pairs, capped at test.max_snapshots per stream, filename includes the
+pair_index so it can be cross-checked against what was on screen and
+against the CSV's pair_index column). At Stop, writes the CSVs
+(domain.csv_export.export_session_csvs), a static end-of-run plot image
+(domain.plot_export.export_session_plot), and one final LED on/off debug
+snapshot for each stream - the same final snapshot can also be saved on
+demand mid-session via the "Save Debug Snapshot" button.
 
-The frame-drops plot was originally a single dual-axis chart sharing one
-plot with the pairing-gap line (via pyqtgraph's linked-ViewBox pattern
-for a second y-axis), but that rendering proved unreliable in practice
-(the second axis's curve visibly tracked the wrong scale on a real run,
-despite passing isolated unit tests) - replaced with a second, ordinary
-LivePlot instance instead, the same well-tested single-axis widget used
-above, trading the "one chart" look for reliability."""
+pairing_gap_us and position_gap_ms each get their own single-axis plot,
+not one dual-axis chart sharing left/right y-axes - the dataviz skill's
+non-negotiables flag dual-axis charts as a genuine readability
+anti-pattern (the alignment of two independently-scaled measures is
+arbitrary and can suggest a correlation that isn't in the data), not
+just a rendering-reliability risk. An earlier dual-axis attempt (for
+pairing gap vs. frame drops, then again for pairing gap vs. position
+gap) had also had a real rendering bug at one point - see git history
+of gui/widgets/dual_axis_live_plot.py (deleted) if that widget is ever
+needed again.
+
+Visual layout/styling (page background, per-chart header rows, stat
+tiles, chart colors, toolbar) matches the design mockup from the
+claude.ai/design project "GUI layout redesign options"
+(file "Optical Sync GUI.dc.html") - imported via the DesignSync MCP tool.
+Some controls that appear in that mockup are visual-only placeholders for
+now, not wired to real behavior (see docs/todo_design_followups.md):
+the per-chart "Copy" and "Export CSV" buttons, the toolbar's "Export CSV"
+button, and the "Stats" section's avg/std/max tiles (nothing computes
+those yet). The frame-drops checkbox IS fully wired, since it only reuses
+LivePlot.set_series_visible - the same mechanism the other two checkboxes
+already used."""
 
 import glob
 import os
 
 import cv2
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSpinBox, QLabel, QCheckBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSpinBox, QLabel, QCheckBox, QFrame,
 )
 
 from gui.widgets.video_panel import VideoPanel
@@ -46,88 +60,161 @@ class LiveSessionPage(QWidget):
         self._context = None
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
-        self._drop_since_last_plot = False
+        self._ir_drop_since_last_plot = False
+        self._rgb_drop_since_last_plot = False
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
         self._last_rgb_on_mask = None
         self._periodic_snapshot_count = 0
 
+        self.setStyleSheet("LiveSessionPage { background-color: #f2f0ea; }")
         layout = QVBoxLayout(self)
 
         video_row = QHBoxLayout()
-        self.ir_panel = VideoPanel()
-        self.rgb_panel = VideoPanel()
+        self.ir_panel = VideoPanel(force_square=True)
+        self.rgb_panel = VideoPanel(force_square=True)
+        for panel in (self.ir_panel, self.rgb_panel):
+            panel.setStyleSheet("background-color: #3a3a3a; border-radius: 4px;")
         video_row.addWidget(self.ir_panel)
         video_row.addWidget(self.rgb_panel)
+        video_row.addStretch(1)
         layout.addLayout(video_row)
 
-        toggle_row = QHBoxLayout()
         self.pairing_gap_checkbox = QCheckBox("Pairing gap (us)")
         self.pairing_gap_checkbox.setChecked(True)
-        self.pairing_gap_checkbox.toggled.connect(self._set_pairing_gap_visible)
+        self.pairing_gap_checkbox.toggled.connect(
+            lambda checked: self.pairing_plot.set_series_visible("pairing_gap_us", checked)
+        )
         self.position_gap_checkbox = QCheckBox("Position gap (ms)")
         self.position_gap_checkbox.setChecked(True)
         self.position_gap_checkbox.toggled.connect(
-            lambda checked: self.live_plot.set_series_visible("position_gap_ms", checked)
+            lambda checked: self.position_plot.set_series_visible("position_gap_ms", checked)
         )
-        toggle_row.addWidget(self.pairing_gap_checkbox)
-        toggle_row.addWidget(self.position_gap_checkbox)
+        self.frame_drops_checkbox = QCheckBox("Frame drops (IR/RGB)")
+        self.frame_drops_checkbox.setChecked(True)
+        self.frame_drops_checkbox.toggled.connect(self._set_frame_drops_visible)
 
-        self.live_plot = LivePlot()
-        self.live_plot.add_series("pairing_gap_us", color="r")
-        self.live_plot.add_series("position_gap_ms", color="g")
+        # Colors match the design mockup's chart lines (blue/aqua/orange).
+        # rgb_frame_drops' color is my own choice - the mockup simplifies
+        # frame drops to one line, but this app genuinely tracks IR/RGB
+        # separately (see the module docstring), so it still needs two
+        # distinct, harmonious colors.
+        self.pairing_plot = LivePlot()
+        self.pairing_plot.setLabel("left", "HW Timestamp Gap (us)")
+        self.pairing_plot.setLabel("bottom", "Pair Index")
+        self.pairing_plot.add_series("pairing_gap_us", color="#4a7fe0")
+
+        self.position_plot = LivePlot()
+        self.position_plot.setLabel("left", "Position Gap (ms)")
+        self.position_plot.setLabel("bottom", "Pair Index")
+        self.position_plot.add_series("position_gap_ms", color="#3fbf9e")
 
         self.drop_plot = LivePlot()
-        self.drop_plot.setLabel("left", "Frame Drops (count)")
+        self.drop_plot.setLabel("left", "Frame Drops (IR up / RGB down)")
         self.drop_plot.setLabel("bottom", "Pair Index")
-        self.drop_plot.add_series("frame_drops", color=(255, 140, 0))
+        # Split by stream (not one combined flag) so you can see which
+        # camera is actually dropping frames, not just that one recently
+        # did - the data was already split (ir_frame_drop/rgb_frame_drop),
+        # only the graph collapsed it into one series.
+        self.drop_plot.add_series("ir_frame_drops", color="#e08a3f")
+        self.drop_plot.add_series("rgb_frame_drops", color="#c0587a")
 
-        # Both graphs live in the same column with equal stretch, so they
-        # get identical width AND height - previously live_plot shared its
-        # row with stats_panel while drop_plot had the full row to itself,
-        # so the two ended up different sizes despite looking like they
-        # should match.
+        # Each graph gets its own header row (checkbox + Copy/Export CSV
+        # stubs) directly above it, all three in one column with equal
+        # width, but the frame-drops graph gets half the height of the
+        # other two - it's a simpler 0/1 signal that doesn't need as much
+        # vertical room, matching the design mockup.
         graphs_column = QVBoxLayout()
-        graphs_column.addLayout(toggle_row)
-        graphs_column.addWidget(self.live_plot, stretch=1)
+        graphs_column.addLayout(self._make_chart_header(self.pairing_gap_checkbox))
+        graphs_column.addWidget(self.pairing_plot, stretch=2)
+        graphs_column.addLayout(self._make_chart_header(self.position_gap_checkbox))
+        graphs_column.addWidget(self.position_plot, stretch=2)
+        graphs_column.addLayout(self._make_chart_header(self.frame_drops_checkbox))
         graphs_column.addWidget(self.drop_plot, stretch=1)
 
         self.stats_panel = StatsPanel()
+        self.stats_panel.setFixedWidth(220)
+        self.stats_panel.add_section_header("Live Data")
         self.stats_panel.add_field("frame_index", "Frame Index")
         self.stats_panel.add_field("pairing_gap_us", "HW Timestamp Gap (us)")
         self.stats_panel.add_field("position_gap_ms", "Position Gap (ms)")
         self.stats_panel.add_field("switch_time_ms", "LED Switch Time (ms)")
         self.stats_panel.add_field("ir_frame_drops", "IR Frame Drops")
         self.stats_panel.add_field("rgb_frame_drops", "RGB Frame Drops")
+        self.stats_panel.add_section_header("Stats")
+        # Placeholder tiles only - nothing computes a running avg/std/max
+        # yet (see docs/todo_design_followups.md); left at their default
+        # "-" rather than shown with fake numbers.
+        self.stats_panel.add_field("hw_ts_sync_summary", "HW TS Sync avg / std / max")
+        self.stats_panel.add_field("optical_latency_summary", "Optical Latency avg / std / max")
 
         middle_row = QHBoxLayout()
-        middle_row.addLayout(graphs_column, stretch=2)
-        middle_row.addWidget(self.stats_panel, stretch=1)
+        middle_row.addLayout(graphs_column, stretch=1)
+        middle_row.addWidget(self.stats_panel)
         layout.addLayout(middle_row)
 
-        control_row = QHBoxLayout()
+        toolbar_frame = QFrame()
+        toolbar_frame.setStyleSheet(
+            "QFrame { background-color: #e9e7e1; border-top: 1px solid #d8d5cd; }"
+        )
+        control_row = QHBoxLayout(toolbar_frame)
+        control_row.setContentsMargins(10, 8, 10, 8)
         control_row.addWidget(QLabel("Duration (s, 0 = manual stop):"))
         self.duration_spinbox = QSpinBox()
         self.duration_spinbox.setRange(0, 3600)
         control_row.addWidget(self.duration_spinbox)
         self.start_button = QPushButton("Start")
+        self.start_button.setStyleSheet(
+            "QPushButton { background-color: #2f6fed; color: white; border: 1px solid #2f6fed;"
+            " border-radius: 4px; padding: 5px 14px; }"
+        )
         self.start_button.clicked.connect(self.start_session)
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop_session)
         self.stop_button.setEnabled(False)
-        self.save_debug_button = QPushButton("Save Debug Snapshot")
-        self.save_debug_button.clicked.connect(self._save_led_state_debug_images)
         control_row.addWidget(self.start_button)
         control_row.addWidget(self.stop_button)
+        control_row.addStretch(1)
+        # Visual placeholder - CSVs are still only written automatically
+        # at Stop (see docs/todo_design_followups.md for manual export).
+        self.export_csv_button = QPushButton("Export CSV")
+        self.export_csv_button.clicked.connect(
+            lambda: self.status_label.setText(
+                "Manual CSV export isn't implemented yet - CSVs are written automatically at Stop."
+            )
+        )
+        self.save_debug_button = QPushButton("Save Debug Snapshot")
+        self.save_debug_button.clicked.connect(self._save_led_state_debug_images)
+        control_row.addWidget(self.export_csv_button)
         control_row.addWidget(self.save_debug_button)
-        layout.addLayout(control_row)
+        layout.addWidget(toolbar_frame)
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
 
-    def _set_pairing_gap_visible(self, checked):
-        self.live_plot.set_series_visible("pairing_gap_us", checked)
+    def _make_chart_header(self, checkbox):
+        # Copy/Export CSV are visual placeholders for now (see module
+        # docstring + docs/todo_design_followups.md) - inert beyond a
+        # status_label message, not real chart-copy/export behavior yet.
+        row = QHBoxLayout()
+        row.addWidget(checkbox)
+        row.addStretch(1)
+        copy_button = QPushButton("⧉")
+        copy_button.setFixedSize(22, 22)
+        copy_button.setToolTip("Copy (not implemented yet)")
+        copy_button.clicked.connect(lambda: self.status_label.setText("Copy isn't implemented yet."))
+        export_button = QPushButton("Export CSV")
+        export_button.clicked.connect(
+            lambda: self.status_label.setText("Per-chart CSV export isn't implemented yet.")
+        )
+        row.addWidget(copy_button)
+        row.addWidget(export_button)
+        return row
+
+    def _set_frame_drops_visible(self, checked):
+        self.drop_plot.set_series_visible("ir_frame_drops", checked)
+        self.drop_plot.set_series_visible("rgb_frame_drops", checked)
 
     def set_context(self, ctx, device_serial, ir_resolution, ir_fps, color_resolution, color_fps,
                     switch_time_ms, scan_direction, ir_threshold, rgb_threshold, ir_xy, rgb_xy, num_leds,
@@ -170,12 +257,14 @@ class LiveSessionPage(QWidget):
         # session left on these graphs, and any manual zoom/pan from the
         # previous session would carry over too (clear() also resets to
         # auto-range).
-        self.live_plot.clear_data()
+        self.pairing_plot.clear_data()
+        self.position_plot.clear_data()
         self.drop_plot.clear_data()
 
         self._ir_drop_count = 0
         self._rgb_drop_count = 0
-        self._drop_since_last_plot = False
+        self._ir_drop_since_last_plot = False
+        self._rgb_drop_since_last_plot = False
         self._last_ir_image = None
         self._last_rgb_image = None
         self._last_ir_on_mask = None
@@ -302,12 +391,10 @@ class LiveSessionPage(QWidget):
         # sample every single pair.
         if row.get("ir_frame_drop"):
             self._ir_drop_count += 1
-            self._drop_since_last_plot = True
+            self._ir_drop_since_last_plot = True
         if row.get("rgb_frame_drop"):
             self._rgb_drop_count += 1
-            self._drop_since_last_plot = True
-        if row.get("position_gap_ms_exclude_reason") == "frame_drop":
-            self._drop_since_last_plot = True
+            self._rgb_drop_since_last_plot = True
 
     def _on_stats_ready(self, stats):
         # Fired only at the throttled display_stride cadence (same frames
@@ -326,20 +413,26 @@ class LiveSessionPage(QWidget):
         if stats.get("pairing_gap_us") is not None:
             self.stats_panel.set_value("pairing_gap_us", stats["pairing_gap_us"])
             pairing_value = stats["pairing_gap_us"] if not stats.get("pairing_gap_us_excluded") else float("nan")
-            self.live_plot.add_point("pairing_gap_us", pair_index, pairing_value)
+            self.pairing_plot.add_point("pairing_gap_us", pair_index, pairing_value)
         if stats.get("position_gap_ms") is not None:
             self.stats_panel.set_value("position_gap_ms", stats["position_gap_ms"])
             position_value = stats["position_gap_ms"] if not stats.get("position_gap_ms_excluded") else float("nan")
-            self.live_plot.add_point("position_gap_ms", pair_index, position_value)
+            self.position_plot.add_point("position_gap_ms", pair_index, position_value)
 
         self.stats_panel.set_value("ir_frame_drops", self._ir_drop_count)
         self.stats_panel.set_value("rgb_frame_drops", self._rgb_drop_count)
-        # Whether ANY drop happened since the last plotted point, not just
+        # Whether THIS stream dropped since the last plotted point, not just
         # this exact pair's own value - otherwise an isolated drop on one of
         # the ~9 skipped pairs between throttled samples would silently
-        # never show up as a spike.
-        self.drop_plot.add_point("frame_drops", pair_index, 1 if self._drop_since_last_plot else 0)
-        self._drop_since_last_plot = False
+        # never show up as a spike. Plotted as two series (not one combined
+        # flag) so you can see which stream is actually the problem. RGB is
+        # mirrored to -1 (not +1) so a simultaneous IR+RGB drop never draws
+        # one line exactly on top of the other, hiding it - IR spikes up,
+        # RGB spikes down, and they can never occlude each other.
+        self.drop_plot.add_point("ir_frame_drops", pair_index, 1 if self._ir_drop_since_last_plot else 0)
+        self.drop_plot.add_point("rgb_frame_drops", pair_index, -1 if self._rgb_drop_since_last_plot else 0)
+        self._ir_drop_since_last_plot = False
+        self._rgb_drop_since_last_plot = False
 
     def _on_session_finished(self, rows):
         export_session_csvs(rows, self._context["kept_csv_path"], self._context["dropped_csv_path"])

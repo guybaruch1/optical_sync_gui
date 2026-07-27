@@ -4,6 +4,7 @@ persisted choices), and shows the MainWindow wizard."""
 
 import sys
 
+import pyqtgraph as pg
 import pyrealsense2 as rs
 from PySide6.QtWidgets import QApplication
 
@@ -13,6 +14,12 @@ from settings import load_settings
 
 
 def main():
+    # Smooths the live plots' lines - pyqtgraph defaults to off, which reads
+    # as jagged on the fast, densely-sampled LED-scan sawtooth patterns the
+    # live session graphs show. Must be set before any PlotWidget is
+    # constructed.
+    pg.setConfigOptions(antialias=True)
+
     app = QApplication(sys.argv)
     ctx = rs.context()
     gui_state = load_gui_state()

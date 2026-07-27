@@ -1,11 +1,22 @@
 """Generic live scrolling plot, fed by named metric series (e.g. one
 curve for PairingGapMetric, one for PositionGapMetric) so the GUI never
-has to special-case which metrics exist - see engine.metrics.Metric."""
+has to special-case which metrics exist - see engine.metrics.Metric.
+
+Styling (background/grid/axis text/line joins) follows the dataviz
+skill's validated dark-mode reference palette instead of pyqtgraph's
+defaults (pure black background, alpha-blended white grid, mitered line
+joins), which read as harsh/jagged on a live-updating chart."""
 
 from collections import deque
 
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QSizePolicy
+
+# dataviz skill's dark-mode chart chrome (references/palette.md).
+SURFACE = "#1a1a19"
+GRIDLINE = "#2c2c2a"
+MUTED_TEXT = "#898781"
 
 
 class LivePlot(pg.PlotWidget):
@@ -13,6 +24,14 @@ class LivePlot(pg.PlotWidget):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(200, 150)
+        self.setBackground(SURFACE)
+        # Explicit hairline pen instead of showGrid's alpha-blended default
+        # white, which reads as busy/heavy at high tick density - a solid,
+        # one-step-off-surface gray is the recessive-grid convention.
+        for axis_name in ("left", "bottom"):
+            axis = self.getAxis(axis_name)
+            axis.setPen(GRIDLINE)
+            axis.setTextPen(MUTED_TEXT)
         self.showGrid(x=True, y=True, alpha=0.3)
         self.addLegend()
         # Bounded per series (not the whole session) - add_point() used to
@@ -29,7 +48,10 @@ class LivePlot(pg.PlotWidget):
         self._y_data = {}
 
     def add_series(self, name, color):
-        curve = self.plot([], [], pen=pg.mkPen(color=color, width=2), name=name, connect="finite")
+        pen = pg.mkPen(color=color, width=2)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        curve = self.plot([], [], pen=pen, name=name, connect="finite")
         self._curves[name] = curve
         self._x_data[name] = deque(maxlen=self._max_points)
         self._y_data[name] = deque(maxlen=self._max_points)
