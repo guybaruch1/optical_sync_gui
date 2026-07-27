@@ -42,6 +42,20 @@ def apply_roi_mask(image, roi):
     return mask
 
 
+def crop_to_roi(image, roi):
+    """Unlike apply_roi_mask (same full frame size, everything outside the
+    ROI zeroed), this actually crops down to the ROI's own dimensions - for
+    display contexts (the live session's video panels) where the ROI
+    region is the only part worth showing at all, not just highlighting it
+    within the full frame."""
+    x, y, w, h = roi
+    # .copy() - a plain slice is a non-contiguous view into the original
+    # array, which QImage construction (VideoPanel.set_frame) can't read
+    # directly (confirmed: raises BufferError: underlying buffer is not
+    # C-contiguous without this).
+    return image[y:y + h, x:x + w].copy()
+
+
 def merge_close_centroids(centroids, distance_fraction=0.5):
     if len(centroids) < 2:
         return centroids

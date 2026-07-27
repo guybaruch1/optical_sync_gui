@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
             output_dir=output_dir,
             snapshot_every_n_pairs=self.settings["test"]["snapshot_every_n_pairs"],
             max_snapshots=self.settings["test"]["max_snapshots"],
+            ir_roi=self.gui_state.ir_roi, rgb_roi=self.gui_state.rgb_roi, camera_name=camera_name,
         )
         self.stack.setCurrentWidget(self.live_session_page)
 

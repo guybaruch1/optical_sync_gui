@@ -50,7 +50,16 @@ from engine.test_session import TestSession, TestSessionConfig
 from engine.metrics import PairingGapMetric, PositionGapMetric
 from domain.csv_export import export_session_csvs
 from domain.plot_export import export_session_plot
-from domain.realsense_utils import draw_led_state_overlay
+from domain.realsense_utils import draw_led_state_overlay, crop_to_roi
+
+
+def _short_camera_name(camera_name):
+    # Device names from pyrealsense2 are consistently "Intel RealSense
+    # <model>" (e.g. "Intel RealSense D455") - the model designator is
+    # what's actually useful in a compact video panel title, not the
+    # vendor prefix repeated on both panels.
+    parts = camera_name.split()
+    return parts[-1] if parts else camera_name
 
 
 class LiveSessionPage(QWidget):
@@ -76,8 +85,24 @@ class LiveSessionPage(QWidget):
         self.rgb_panel = VideoPanel(force_square=True)
         for panel in (self.ir_panel, self.rgb_panel):
             panel.setStyleSheet("background-color: #3a3a3a; border-radius: 4px;")
-        video_row.addWidget(self.ir_panel)
-        video_row.addWidget(self.rgb_panel)
+        # Placeholder text until set_context() fills in the actual camera
+        # model name (e.g. "D455 - IR") - device identity isn't known until
+        # then.
+        self.ir_title_label = QLabel("IR Camera")
+        self.rgb_title_label = QLabel("RGB Camera")
+        for title_label in (self.ir_title_label, self.rgb_title_label):
+            title_label.setStyleSheet(
+                "color: #555555; font-weight: 600; font-size: 9pt;"
+                "text-transform: uppercase; letter-spacing: 1px; border: none; background: transparent;"
+            )
+        ir_column = QVBoxLayout()
+        ir_column.addWidget(self.ir_title_label)
+        ir_column.addWidget(self.ir_panel)
+        rgb_column = QVBoxLayout()
+        rgb_column.addWidget(self.rgb_title_label)
+        rgb_column.addWidget(self.rgb_panel)
+        video_row.addLayout(ir_column)
+        video_row.addLayout(rgb_column)
         video_row.addStretch(1)
         layout.addLayout(video_row)
 
@@ -221,7 +246,7 @@ class LiveSessionPage(QWidget):
                     neighborhood_size,
                     frame_drop_threshold_factor, warmup_pairs_to_skip, pairing_gap_outlier_threshold_us,
                     kept_csv_path, dropped_csv_path, output_dir,
-                    snapshot_every_n_pairs, max_snapshots):
+                    snapshot_every_n_pairs, max_snapshots, ir_roi, rgb_roi, camera_name):
         self._context = dict(
             ctx=ctx, device_serial=device_serial, ir_resolution=ir_resolution, ir_fps=ir_fps,
             color_resolution=color_resolution, color_fps=color_fps, switch_time_ms=switch_time_ms,
@@ -233,8 +258,12 @@ class LiveSessionPage(QWidget):
             pairing_gap_outlier_threshold_us=pairing_gap_outlier_threshold_us,
             kept_csv_path=kept_csv_path, dropped_csv_path=dropped_csv_path, output_dir=output_dir,
             snapshot_every_n_pairs=snapshot_every_n_pairs, max_snapshots=max_snapshots,
+            ir_roi=ir_roi, rgb_roi=rgb_roi,
         )
         self.stats_panel.set_value("switch_time_ms", switch_time_ms)
+        short_name = _short_camera_name(camera_name)
+        self.ir_title_label.setText("{} - IR".format(short_name))
+        self.rgb_title_label.setText("{} - RGB".format(short_name))
 
     def start_session(self):
         ctx = self._context
@@ -329,6 +358,11 @@ class LiveSessionPage(QWidget):
 
         display_image = draw_led_state_overlay(image, self._overlay_xy(stream_name), on_mask) \
             if on_mask is not None and self._context is not None else image
+        # Cropped AFTER the overlay is drawn, not before - the overlay's
+        # circles are positioned in full-frame coordinates (matching
+        # ir_xy/rgb_xy), so cropping first would misplace them relative to
+        # the now-smaller image.
+        display_image = self._crop_to_roi_if_available(display_image, stream_name)
         if stream_name == "ir":
             self.ir_panel.set_frame(display_image)
         else:
@@ -337,6 +371,18 @@ class LiveSessionPage(QWidget):
             # (see SessionEngineThread.on_frames), so by this point
             # _last_ir_image/_last_ir_on_mask have already been updated too.
             self._maybe_save_periodic_snapshot(pair_index)
+
+    def _crop_to_roi_if_available(self, image, stream_name):
+        # Only affects the live preview - _last_ir_image/_last_rgb_image
+        # (used for the saved debug snapshots) stay full-frame, since
+        # seeing the ROI's placement in context is more useful there than
+        # a tightly-cropped view.
+        if self._context is None:
+            return image
+        roi = self._context["ir_roi"] if stream_name == "ir" else self._context["rgb_roi"]
+        if roi is None or roi[2] <= 0 or roi[3] <= 0:
+            return image
+        return crop_to_roi(image, roi)
 
     def _overlay_xy(self, stream_name):
         return self._context["ir_xy"] if stream_name == "ir" else self._context["rgb_xy"]

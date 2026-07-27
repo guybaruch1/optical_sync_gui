@@ -3,6 +3,7 @@ from domain.realsense_utils import (
     sample_neighborhood_brightness,
     sample_all_neighborhood_brightness,
     apply_roi_mask,
+    crop_to_roi,
     merge_close_centroids,
     detect_led_centroids,
     ir_bytes_to_image,
@@ -52,6 +53,16 @@ def test_apply_roi_mask_zeroes_outside_box():
     assert masked[0, 0].tolist() == [0, 0, 0]
     assert masked[3, 3].tolist() == [255, 255, 255]
     assert masked.shape == image.shape
+
+
+def test_crop_to_roi_returns_only_the_roi_region():
+    image = np.zeros((10, 10, 3), dtype=np.uint8)
+    image[2:5, 2:5] = 255  # a 3x3 bright block starting at (2, 2)
+
+    cropped = crop_to_roi(image, (2, 2, 3, 3))
+
+    assert cropped.shape == (3, 3, 3)
+    assert (cropped == 255).all()
 
 
 def test_merge_close_centroids_merges_nearby_points():
