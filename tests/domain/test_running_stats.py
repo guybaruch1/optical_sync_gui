@@ -1,9 +1,11 @@
 from domain.running_stats import RunningStats
 
 
-def test_empty_stats_summary_is_dash():
+def test_empty_stats_has_no_min_max():
     stats = RunningStats()
-    assert stats.summary_text() == "-"
+    assert stats.count == 0
+    assert stats.min is None
+    assert stats.max is None
 
 
 def test_mean_of_single_value():
@@ -11,7 +13,8 @@ def test_mean_of_single_value():
     stats.update(10.0)
     assert stats.mean == 10.0
     assert stats.std == 0.0
-    assert stats.extreme == 10.0
+    assert stats.min == 10.0
+    assert stats.max == 10.0
 
 
 def test_mean_and_std_match_known_values():
@@ -23,22 +26,17 @@ def test_mean_and_std_match_known_values():
     assert round(stats.std, 4) == 2.0
 
 
-def test_extreme_is_largest_magnitude_sign_preserved():
+def test_min_and_max_track_true_extremes_not_signed_magnitude():
     stats = RunningStats()
     for value in (-37.0, -38.5, -40.0, -36.0):
         stats.update(value)
-    assert stats.extreme == -40.0
+    assert stats.min == -40.0
+    assert stats.max == -36.0
 
 
-def test_extreme_prefers_large_positive_over_smaller_negative():
+def test_min_and_max_with_mixed_signs():
     stats = RunningStats()
     stats.update(-5.0)
     stats.update(12.0)
-    assert stats.extreme == 12.0
-
-
-def test_summary_text_formats_mean_std_extreme():
-    stats = RunningStats()
-    stats.update(-38.0)
-    stats.update(-40.0)
-    assert stats.summary_text() == "-39.0 / 1.0 / -40.0"
+    assert stats.min == -5.0
+    assert stats.max == 12.0

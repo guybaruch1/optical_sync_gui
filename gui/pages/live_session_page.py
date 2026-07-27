@@ -38,11 +38,12 @@ clipboard; the per-chart "Export CSV" button writes that chart's own
 plotted series (domain.csv_export.export_series_csv) to output_dir; the
 toolbar's "Export CSV" button re-writes the last completed session's CSVs
 (the same rows _on_session_finished already wrote once at Stop); the
-"Stats" section's avg/std/max tiles are backed by domain.running_stats.RunningStats,
-updated every pair (same cadence as the frame-drop counters) and pushed to
-the tiles on the same throttled cadence the live plots update on. The
-frame-drops checkbox reuses LivePlot.set_series_visible - the same
-mechanism the other two checkboxes use."""
+"Stats" section's min/avg/std/max table is backed by
+domain.running_stats.RunningStats, updated every pair (same cadence as the
+frame-drop counters) and pushed to the table on the same throttled cadence
+the live plots update on. The frame-drops checkbox reuses
+LivePlot.set_series_visible - the same mechanism the other two checkboxes
+use."""
 
 import glob
 import os
@@ -222,8 +223,10 @@ class LiveSessionPage(QWidget):
         self.stats_panel.add_field("ir_frame_drops", "IR Frame Drops")
         self.stats_panel.add_field("rgb_frame_drops", "RGB Frame Drops")
         self.stats_panel.add_section_header("Stats")
-        self.stats_panel.add_field("hw_ts_latency_summary", "HW TS Latency avg / std / max")
-        self.stats_panel.add_field("optical_sync_summary", "Optical Sync avg / std / max")
+        self.stats_panel.add_stats_table([
+            ("hw_ts_latency", "HW TS Latency"),
+            ("optical_sync", "Optical Sync"),
+        ])
 
         middle_row = QHBoxLayout()
         middle_row.addLayout(graphs_column, stretch=1)
@@ -569,8 +572,16 @@ class LiveSessionPage(QWidget):
         self._ir_drop_since_last_plot = False
         self._rgb_drop_since_last_plot = False
 
-        self.stats_panel.set_value("hw_ts_latency_summary", self._hw_ts_latency_stats.summary_text())
-        self.stats_panel.set_value("optical_sync_summary", self._optical_sync_stats.summary_text())
+        self._push_running_stats("hw_ts_latency", self._hw_ts_latency_stats)
+        self._push_running_stats("optical_sync", self._optical_sync_stats)
+
+    def _push_running_stats(self, key, stats):
+        if stats.count == 0:
+            return
+        self.stats_panel.set_value("{}_min".format(key), round(stats.min, 1))
+        self.stats_panel.set_value("{}_avg".format(key), round(stats.mean, 1))
+        self.stats_panel.set_value("{}_std".format(key), round(stats.std, 1))
+        self.stats_panel.set_value("{}_max".format(key), round(stats.max, 1))
 
     def _on_session_finished(self, rows):
         self._last_session_rows = rows
